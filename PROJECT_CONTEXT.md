@@ -7,6 +7,7 @@ Nexona is a new SaaS project. Sprint 1 established a clean Next.js 15 + TypeScri
 ## Completed work
 
 **Sprint 1 — Project Foundation** (committed: `65050e7`)
+
 - Next.js 15.5.21 app scaffolded with App Router, TypeScript, `src/` layout, `@/*` import alias.
 - Tailwind CSS v4 configured.
 - shadcn/ui initialized (Radix UI primitives, Nova preset — Lucide icons + Geist font).
@@ -23,6 +24,7 @@ Scope was later narrowed mid-sprint to **2A.1 — Navbar only**, to be reviewed 
 ## Current task
 
 Implement the responsive Navbar (2A.1):
+
 - Desktop: Nexona logo, Features, Pricing, FAQ, Sign In, Get Started.
 - Mobile: hamburger menu with smooth open/close animation, accessible keyboard navigation.
 - Sticky on scroll, with the scroll-state visual treatment (border/background/shadow) specified in the Design System.
@@ -34,6 +36,7 @@ Implement the responsive Navbar (2A.1):
 ## Next task
 
 Once the Navbar is implemented and reviewed:
+
 - Build the Hero section (headline, supporting text, primary CTA, secondary CTA, product preview) per the original Sprint 2A scope, as its own reviewed step.
 - Stop after Hero — no further landing page sections (Features, Pricing, FAQ, Footer, etc.) until a future sprint explicitly requests them.
 
