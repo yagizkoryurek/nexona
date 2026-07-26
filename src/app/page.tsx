@@ -1,5 +1,6 @@
 import { Features } from "@/components/features/features";
 import { Hero } from "@/components/hero/hero";
+import { HowItWorks } from "@/components/how-it-works/how-it-works";
 import { Navbar } from "@/components/navbar/navbar";
 
 export default function Home() {
@@ -9,6 +10,7 @@ export default function Home() {
       <main>
         <Hero />
         <Features />
+        <HowItWorks />
       </main>
     </>
   );
