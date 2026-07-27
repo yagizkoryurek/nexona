@@ -13,7 +13,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nexona",
+  title: {
+    default: "Nexona",
+    // Child routes set only their own title; "— Nexona" is appended here.
+    template: "%s — Nexona",
+  },
 };
 
 export default function RootLayout({

@@ -6,6 +6,7 @@
 import Link from "next/link";
 import { ArrowRight, Check, Play } from "lucide-react";
 
+import { DecorativeBackdrop } from "@/components/decorative-backdrop";
 import { Button } from "@/components/ui/button";
 
 import { AnnouncementBadge } from "./announcement-badge";
@@ -18,7 +19,7 @@ export function Hero() {
       aria-labelledby="hero-heading"
       className="relative isolate overflow-hidden"
     >
-      <HeroBackdrop />
+      <DecorativeBackdrop />
 
       <div className="mx-auto w-full max-w-6xl px-4 py-16 sm:px-6 sm:py-20 lg:px-8 lg:py-28">
         <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
@@ -74,19 +75,5 @@ export function Hero() {
         </div>
       </div>
     </section>
-  );
-}
-
-/** Decorative washes and hairline grid behind the hero. */
-function HeroBackdrop() {
-  return (
-    <div
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
-    >
-      <div className="bg-foreground/[0.04] absolute -top-40 -left-32 size-[34rem] rounded-full blur-3xl" />
-      <div className="bg-foreground/[0.05] absolute -top-24 -right-24 size-[38rem] rounded-full blur-3xl" />
-      <div className="absolute inset-0 [background-image:linear-gradient(to_right,var(--border)_1px,transparent_1px),linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] [mask-image:radial-gradient(ellipse_65%_55%_at_50%_0%,black,transparent)] [background-size:64px_64px] opacity-40" />
-    </div>
   );
 }
