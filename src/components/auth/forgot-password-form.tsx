@@ -1,21 +1,24 @@
 "use client";
 
+import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { FormProvider, useForm } from "react-hook-form";
 
 import { Input } from "@/components/ui/input";
 
+import { AuthAlert } from "./auth-alert";
+import { AuthCheckEmail } from "./auth-check-email";
 import { AuthField } from "./auth-field";
 import { AuthSubmitButton } from "./auth-submit-button";
-import { ForgotPasswordSuccess } from "./forgot-password-success";
+import { requestPasswordReset } from "./auth-actions";
 import {
   forgotPasswordSchema,
   type ForgotPasswordValues,
 } from "./auth-schemas";
-import { useMockSubmit } from "./use-mock-submit";
 
 export function ForgotPasswordForm() {
-  const { pending, settled, submit, reset } = useMockSubmit();
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [sentTo, setSentTo] = React.useState<string | null>(null);
 
   const form = useForm<ForgotPasswordValues>({
     resolver: zodResolver(forgotPasswordSchema),
@@ -24,16 +27,38 @@ export function ForgotPasswordForm() {
     defaultValues: { email: "" },
   });
 
+  const pending = form.formState.isSubmitting;
+
+  const onSubmit = async (values: ForgotPasswordValues) => {
+    setFormError(null);
+    const result = await requestPasswordReset(values);
+
+    if (result?.error) {
+      setFormError(result.error);
+      return;
+    }
+
+    setSentTo(values.email);
+  };
+
   const handleRetry = () => {
-    reset();
+    setSentTo(null);
     form.reset();
   };
 
-  if (settled) {
+  // Shown whether or not the address has an account — a difference here would
+  // let anyone test which emails are registered.
+  if (sentTo) {
     return (
-      <ForgotPasswordSuccess
-        email={form.getValues("email")}
+      <AuthCheckEmail
+        email={sentTo}
         onRetry={handleRetry}
+        description={(address) => (
+          <>
+            If an account exists for {address}, we&apos;ve sent a link to reset
+            your password.
+          </>
+        )}
       />
     );
   }
@@ -43,9 +68,11 @@ export function ForgotPasswordForm() {
       <form
         noValidate
         aria-busy={pending}
-        onSubmit={form.handleSubmit(submit)}
+        onSubmit={form.handleSubmit(onSubmit)}
         className="flex flex-col gap-5"
       >
+        {formError ? <AuthAlert>{formError}</AuthAlert> : null}
+
         <AuthField<ForgotPasswordValues> name="email" label="Email">
           {(field) => (
             <Input

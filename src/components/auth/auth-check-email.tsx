@@ -3,22 +3,30 @@ import { MailCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-type ForgotPasswordSuccessProps = {
+type AuthCheckEmailProps = {
   /** Echoed back so the user can spot a typo without retyping. */
   email: string;
+  /**
+   * Sentence wrapped around the address. Takes the styled address node so the
+   * wording can differ per flow while the treatment stays identical.
+   */
+  description: (address: React.ReactNode) => React.ReactNode;
   /** Returns to the form, e.g. if the address was wrong. */
   onRetry: () => void;
+  retryLabel?: string;
 };
 
 /**
- * Mocked confirmation shown after the reset form is submitted. No email is
- * sent — this exists so the success state is designed and reviewed now rather
- * than bolted on once a backend arrives.
+ * Shown after an email is dispatched — account confirmation on sign-up,
+ * recovery link on forgot-password. The two flows differ only in wording, so
+ * they share one panel.
  */
-export function ForgotPasswordSuccess({
+export function AuthCheckEmail({
   email,
+  description,
   onRetry,
-}: ForgotPasswordSuccessProps) {
+  retryLabel = "Use a different email",
+}: AuthCheckEmailProps) {
   return (
     <div className="flex flex-col items-center text-center">
       <span
@@ -37,9 +45,11 @@ export function ForgotPasswordSuccess({
       </p>
 
       <p className="text-muted-foreground mt-2 text-sm leading-relaxed text-pretty">
-        If an account exists for{" "}
-        <span className="text-foreground font-medium break-all">{email}</span>,
-        we&apos;ve sent a link to reset your password.
+        {description(
+          <span className="text-foreground font-medium break-all">
+            {email}
+          </span>,
+        )}
       </p>
 
       <button
@@ -51,7 +61,7 @@ export function ForgotPasswordSuccess({
           "motion-reduce:transition-none",
         )}
       >
-        Use a different email
+        {retryLabel}
       </button>
 
       <Link

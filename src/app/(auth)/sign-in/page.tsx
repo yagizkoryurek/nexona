@@ -8,7 +8,15 @@ export const metadata: Metadata = {
   title: "Sign In",
 };
 
-export default function SignInPage() {
+type SignInPageProps = {
+  searchParams: Promise<{ next?: string; notice?: string }>;
+};
+
+export default async function SignInPage({ searchParams }: SignInPageProps) {
+  // Read on the server so the form stays free of `useSearchParams`, which
+  // would otherwise need a Suspense boundary here.
+  const { next, notice } = await searchParams;
+
   return (
     <AuthCard
       title="Sign in to Nexona"
@@ -21,7 +29,7 @@ export default function SignInPage() {
         />
       }
     >
-      <SignInForm />
+      <SignInForm next={next} notice={notice} />
     </AuthCard>
   );
 }

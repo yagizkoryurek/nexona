@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, FormProvider, useForm } from "react-hook-form";
@@ -10,11 +11,12 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 import { AuthAlert } from "./auth-alert";
+import { AuthCheckEmail } from "./auth-check-email";
 import { AuthField } from "./auth-field";
 import { AuthSubmitButton } from "./auth-submit-button";
 import { PasswordInput } from "./password-input";
+import { signUp } from "./auth-actions";
 import { signUpSchema, type SignUpValues } from "./auth-schemas";
-import { useMockSubmit } from "./use-mock-submit";
 
 const legalLinkStyles = cn(
   "text-foreground rounded-sm underline underline-offset-4 transition-colors hover:opacity-70",
@@ -23,7 +25,8 @@ const legalLinkStyles = cn(
 );
 
 export function SignUpForm() {
-  const { pending, settled, submit } = useMockSubmit();
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [sentTo, setSentTo] = React.useState<string | null>(null);
 
   const form = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
@@ -40,22 +43,52 @@ export function SignUpForm() {
     },
   });
 
+  const pending = form.formState.isSubmitting;
   const termsError = form.formState.errors.terms?.message;
+
+  const onSubmit = async (values: SignUpValues) => {
+    setFormError(null);
+    const result = await signUp(values);
+
+    if (result?.error) {
+      setFormError(result.error);
+      return;
+    }
+
+    setSentTo(values.email);
+  };
+
+  const handleRetry = () => {
+    setSentTo(null);
+    form.reset();
+  };
+
+  // The account exists but cannot be used until the emailed link is clicked,
+  // so there is nowhere to redirect to yet.
+  if (sentTo) {
+    return (
+      <AuthCheckEmail
+        email={sentTo}
+        onRetry={handleRetry}
+        description={(address) => (
+          <>
+            We&apos;ve sent a confirmation link to {address}. Click it to
+            activate your account and sign in.
+          </>
+        )}
+      />
+    );
+  }
 
   return (
     <FormProvider {...form}>
       <form
         noValidate
         aria-busy={pending}
-        onSubmit={form.handleSubmit(submit)}
+        onSubmit={form.handleSubmit(onSubmit)}
         className="flex flex-col gap-5"
       >
-        {settled ? (
-          <AuthAlert variant="info">
-            Your details passed validation. Account creation is not wired up yet
-            — authentication arrives in a future sprint.
-          </AuthAlert>
-        ) : null}
+        {formError ? <AuthAlert>{formError}</AuthAlert> : null}
 
         <AuthField<SignUpValues> name="name" label="Full name">
           {(field) => (
