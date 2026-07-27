@@ -1,8 +1,14 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 import { signOut } from "./auth-actions";
+
+type SignOutButtonProps = {
+  /** Applied to the wrapping form, so callers can size it within a row. */
+  className?: string;
+};
 
 /**
  * A real submit button inside a form, not a link: signing out is a mutation,
@@ -12,10 +18,15 @@ import { signOut } from "./auth-actions";
  * which needs `createContext` — it carries no "use client" of its own, and
  * that file is shadcn-generated, so the boundary is declared here instead.
  */
-export function SignOutButton() {
+export function SignOutButton({ className }: SignOutButtonProps) {
   return (
-    <form action={signOut}>
-      <Button type="submit" variant="outline" size="lg" className="h-11 px-6">
+    <form action={signOut} className={cn(className)}>
+      <Button
+        type="submit"
+        variant="outline"
+        size="lg"
+        className="h-11 w-full px-6"
+      >
         Sign Out
       </Button>
     </form>
