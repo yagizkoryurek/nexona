@@ -9,6 +9,10 @@ const PROTECTED_PREFIXES = [DEFAULT_AUTHENTICATED_PATH];
 /**
  * Pointless for a signed-in user, so they get bounced to the dashboard.
  *
+ * "/" is deliberately absent: it's the public marketing page, not an
+ * auth-only page, and it stays reachable regardless of session state —
+ * only explicit sign-in/sign-up routes a user into the app.
+ *
  * `/reset-password` is deliberately absent: a user arriving from a recovery
  * email *is* signed in (the callback exchanged the link for a recovery
  * session), so listing it here would make the reset flow impossible to
