@@ -7,6 +7,11 @@ export const metadata: Metadata = {
   title: "Dashboard",
 };
 
+// Resume analysis (text extraction + an LLM call) can run long; raise the
+// default serverless function timeout for this route. Confirm your hosting
+// plan actually honors this — e.g. Vercel's Hobby tier caps at 10s regardless.
+export const maxDuration = 60;
+
 /**
  * Where every successful sign-in lands. The session is read here rather than in
  * the client component so the greeting renders on the server with no auth call

@@ -1,3 +1,7 @@
 allowBuilds:
+  # Both ship prebuilt artifacts; their scripts are only needed when building
+  # from source (@google/genai) or print a version-scheme warning (protobufjs).
+  "@google/genai": false
+  protobufjs: false
   sharp: true
   unrs-resolver: true

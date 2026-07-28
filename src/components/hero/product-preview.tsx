@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-import { ScoreRing } from "./score-ring";
+import { ScoreRing } from "@/components/score-ring";
 
 const OVERALL_SCORE = 78;
 
