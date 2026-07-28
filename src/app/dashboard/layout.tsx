@@ -1,8 +1,17 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { DashboardSidebar } from "@/components/dashboard/dashboard-sidebar";
 import { DecorativeBackdrop } from "@/components/decorative-backdrop";
-import { NavbarBrand } from "@/components/navbar/navbar-brand";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { createClient } from "@/lib/supabase/server";
+
+/** Written by `SidebarProvider` on every toggle; read back here on the server. */
+const SIDEBAR_COOKIE_NAME = "sidebar_state";
 
 /**
  * Guarded shell for everything behind sign-in.
@@ -23,17 +32,28 @@ export default async function DashboardLayout({
     redirect("/sign-in?next=/dashboard");
   }
 
+  // Resolving the collapsed state on the server keeps the sidebar from
+  // rendering open and then snapping shut for someone who collapsed it.
+  const cookieStore = await cookies();
+  const defaultOpen = cookieStore.get(SIDEBAR_COOKIE_NAME)?.value !== "false";
+
   return (
-    <div className="relative isolate flex min-h-dvh flex-col overflow-hidden">
-      <DecorativeBackdrop />
+    <SidebarProvider defaultOpen={defaultOpen}>
+      <DashboardSidebar />
 
-      <header className="flex justify-center px-4 pt-8 sm:px-6 sm:pt-10">
-        <NavbarBrand />
-      </header>
+      {/* `SidebarInset` is the <main> element; the backdrop sits under the
+          page content rather than behind the sidebar too. */}
+      <SidebarInset className="isolate overflow-hidden">
+        <DecorativeBackdrop />
 
-      <main className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6 sm:py-12">
-        {children}
-      </main>
-    </div>
+        <header className="flex h-14 shrink-0 items-center px-4 sm:px-6">
+          <SidebarTrigger />
+        </header>
+
+        <div className="flex flex-1 flex-col px-4 pb-10 sm:px-6 sm:pb-12">
+          {children}
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

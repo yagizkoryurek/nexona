@@ -53,6 +53,10 @@ preview, Features, How It Works, Pricing (billing toggle), FAQ, Footer.
 confirmation, sign in, sign out, forgot password, reset password, auth
 callback for emailed links, route protection, session refresh.
 
+**Dashboard shell** — a guarded sidebar layout at `/dashboard` with persistent
+navigation, collapse state that survives reload, and a mobile drawer. Overview
+lives at `/dashboard`; each tool gets its own route beneath it.
+
 **Resume Analyzer** — drag-and-drop or click-to-browse upload, client and
 server validation, text extraction, Gemini analysis, persistence, results UI.
 Supported formats: **PDF** and **DOCX** (`.doc` is not — see Known
@@ -72,10 +76,13 @@ Exactly as it behaves today.
 **Routes.** `/` (public landing) · `/sign-in` · `/get-started` (sign up) ·
 `/forgot-password` · `/reset-password` · `/auth/callback` · `/dashboard`.
 
-**Middleware** (`middleware.ts` → `src/lib/supabase/middleware.ts`) runs on
-every non-static request. It calls `supabase.auth.getUser()` — which
-revalidates the token against the Auth server and writes rotated cookies onto
-the response — then applies two rules:
+**Middleware** (`middleware.ts` → `src/lib/supabase/middleware.ts`) is written
+to run on every non-static request, but **is not currently registered with
+Next.js and therefore never executes** — see Known Limitations. Everything in
+this subsection describes intended behaviour that is presently inert; the only
+live guard is the `getUser()` check in `dashboard/layout.tsx`. It calls
+`supabase.auth.getUser()` — which revalidates the token against the Auth server
+and writes rotated cookies onto the response — then applies two rules:
 
 - `PROTECTED_PREFIXES = ["/dashboard"]` — no session → redirect to
   `/sign-in?next=<path>`.
@@ -109,14 +116,18 @@ impossible to complete. That page guards itself instead.
 deliberately identical for unknown-email and wrong-password to prevent user
 enumeration. `safeRedirectPath` (`src/lib/auth-redirect.ts`) rejects
 cross-origin and protocol-relative `next` values. Server Actions carry Next's
-built-in Origin-header CSRF check. `/dashboard` is guarded twice — middleware
-plus a `getUser()` check in `dashboard/layout.tsx` — so a routing change alone
-cannot expose it.
+built-in Origin-header CSRF check. `/dashboard` was designed to be guarded
+twice — middleware plus a `getUser()` check in `dashboard/layout.tsx` — but
+with the middleware inert, **the layout check is the only thing protecting it**.
+It does hold: every `/dashboard/*` route renders through that layout, and
+signed-out requests redirect. The redundancy, not the protection, is what is
+currently missing.
 
 ## Project Structure
 
 ```
-middleware.ts                  Thin call site → lib/supabase/middleware
+middleware.ts                  Thin call site → lib/supabase/middleware.
+                               NOT currently registered — see Known Limitations
 supabase/migrations/           SQL, applied manually via Supabase SQL Editor
 
 src/app/
@@ -124,18 +135,26 @@ src/app/
   (auth)/                      sign-in, get-started, forgot-password,
                                reset-password + shared auth layout
   auth/callback/route.ts       Code exchange for emailed links
-  dashboard/                   Protected: layout.tsx guards, page.tsx renders
+  dashboard/                   Protected app shell
+    layout.tsx                 getUser() guard + sidebar shell
+    page.tsx                   Overview (greeting + entry point)
+    resume-analyzer/page.tsx   Resume Analyzer (maxDuration lives here)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
-                               (present: accordion, button, checkbox, input, label)
+                               (present: accordion, button, checkbox, input,
+                               label, separator, sheet, sidebar, skeleton,
+                               tooltip)
   auth/                        Forms, shared auth UI, auth-actions.ts
-  dashboard/                   welcome-screen, resume-analyzer, resume-dropzone,
+  dashboard/                   dashboard-sidebar, dashboard-nav-items, overview,
+                               resume-analyzer, resume-dropzone,
                                analysis-results, resume-analyze-action.ts
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
   score-ring.tsx               Shared 0–100 ring (landing + analyzer)
   decorative-backdrop.tsx      Shared backdrop (landing + auth + dashboard)
+
+src/hooks/use-mobile.ts        Generated with the sidebar block — DO NOT EDIT
 
 src/lib/
   supabase/                    client.ts (browser), server.ts (RSC/actions),
@@ -149,10 +168,22 @@ src/lib/
 src/types/mammoth.d.ts         Local ambient types (mammoth ships none)
 ```
 
-Note: the Resume Analyzer is **not** its own route. `/dashboard` renders
-`WelcomeScreen`, which has two in-place states — a welcome panel, and the
-analyzer workspace behind a "Continue" button. A real dashboard with sidebar
-navigation is planned, not built.
+**The dashboard shell.** `dashboard/layout.tsx` is the guarded app shell: it
+runs `getUser()`, then renders `SidebarProvider` → `DashboardSidebar` →
+`SidebarInset`. Each tool is its own route underneath, so adding one means
+adding a route plus an entry in `dashboard-nav-items.ts`.
+
+`DashboardSidebar` is a client component because the active item is derived from
+`usePathname()`. Overview matches its href exactly; tool routes match by prefix,
+so nested pages still mark their parent active. `dashboardNavItems` lists **only
+shipped destinations** — an entry there is a promise the route works.
+
+Collapse behaviour is the block's `offcanvas` default, not `icon`. Icon mode
+requires a `tooltip` on every menu button, and the generated `ui/tooltip.tsx`
+exports `TooltipProvider` separately rather than wrapping itself — using a
+tooltip without a provider ancestor throws at runtime. `SidebarProvider` writes
+a `sidebar_state` cookie, which the layout reads server-side so the sidebar does
+not render open and then snap shut.
 
 ## AI Architecture
 
@@ -252,15 +283,32 @@ with `pnpm dlx shadcn@latest add <component>`.
 - Sprint 3 — resume upload experience
 - Sprint 4 — Resume Analyzer (AI analysis, persistence, results UI)
 
-**Current** — Sprint 5. Task 1 (auth routing) is closed: the attempt to
-redirect authenticated users away from `/` was implemented and then reverted
-by request. `/` is the public landing page for everyone.
+**Current** — Sprint 5.
 
-**Planned** — Dashboard · Sidebar Navigation · Resume Optimizer · ATS Checker
-· Cover Letter · Career Insights.
+- Task 1 (auth routing) is closed: the attempt to redirect authenticated users
+  away from `/` was implemented and then reverted by request. `/` is the public
+  landing page for everyone.
+- Task 2 (dashboard shell + sidebar navigation) is implemented: shadcn `sidebar`
+  block, Overview at `/dashboard`, analyzer at `/dashboard/resume-analyzer`,
+  `WelcomeScreen` deleted. Static gates pass; the signed-out redirect is
+  verified. **The signed-in pass is still outstanding** — nothing behind the
+  login has been exercised in a browser yet.
+
+**Planned** — Resume Optimizer · ATS Checker · Cover Letter · Career Insights.
 
 ## Known Limitations
 
+- **The middleware never runs.** `middleware.ts` sits at the repo root, but this
+  project keeps its app under `src/`, so Next.js looks for `src/middleware.ts`
+  and finds nothing. Confirmed empirically, not inferred: `next build` writes
+  `"middleware": {}` / `"sortedMiddleware": []` into
+  `.next/server/middleware-manifest.json`, and no middleware compile step
+  appears in `next dev`. Consequences — the second layer of `/dashboard`
+  protection is absent (the layout guard still holds), `AUTH_ONLY_PATHS` never
+  fires so a signed-in user can still open `/sign-in`, and cookie rotation via
+  `getUser()` only happens on routes that call it themselves. Found while
+  verifying the dashboard shell; **not yet fixed** — moving the file activates
+  behaviour that has never actually executed, which deserves its own task.
 - **`.doc` is not supported.** The picker accepts `.pdf,.doc,.docx` and
   `validateResumeFile` passes `.doc` through, but extraction rejects it with a
   clear message — no reliable pure-JS extractor exists for the legacy binary
@@ -277,8 +325,14 @@ by request. `/` is the public landing page for everyone.
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
-- **`maxDuration = 60`** is set on `dashboard/page.tsx`, but Vercel's Hobby
-  tier caps functions at 10s regardless — a slow analysis will time out there.
+- **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`, but
+  Vercel's Hobby tier caps functions at 10s regardless — a slow analysis will
+  time out there.
+- **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
+  hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
+  `/dashboard/resume-analyzer` lands on Overview after signing in rather than
+  the analyzer. A Server Component cannot read the pathname; the middleware is
+  what encodes the real one, and it is inert.
 - **PKCE links are browser-bound.** Confirmation and recovery links must be
   opened in the same browser that started the flow, or the code exchange fails
   and the user lands on `/sign-in?notice=link-invalid`.
@@ -314,12 +368,17 @@ verified working end to end. The landing page is complete. Roughly: the
 product's first real feature ships, and the next phase is building the app
 shell around it.
 
-The most useful thing to understand structurally: **there is no dashboard
-yet.** `/dashboard` is a single page whose component toggles between a welcome
-card and the analyzer. Sidebar navigation and separate tool routes are the
-planned next step, and every planned feature (Optimizer, ATS Checker, Cover
-Letter, Career Insights) will need somewhere to live. Expect the
-`WelcomeScreen` two-state pattern to be replaced rather than extended.
+The most useful thing to understand structurally: **the app shell now exists.**
+`/dashboard` is a guarded sidebar layout with Overview at its root and each tool
+on its own route beneath it. Adding the next feature (Optimizer, ATS Checker,
+Cover Letter, Career Insights) means adding a route under `dashboard/` and an
+entry in `dashboard-nav-items.ts` — nothing structural left to invent. The old
+`WelcomeScreen` two-state toggle has been deleted.
+
+Before building anything new, read the **first** Known Limitation. The
+middleware has never executed, which means the documented auth model and the
+running one differ. That is the highest-value thing to fix in this codebase and
+it is deliberately left open rather than folded into an unrelated task.
 
 Two conventions carry real weight here. First, this project is worked
 **sprint-by-sprint with a review gate** — implement the current task, stop,
