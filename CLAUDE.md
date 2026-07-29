@@ -65,9 +65,22 @@ Limitations). Max upload 10 MB (`MAX_RESUME_SIZE_BYTES`).
 **Analysis output** — Overall Score (0–100), ATS Score (0–100), a one-sentence
 summary, and lists of Strengths, Weaknesses, and Suggestions.
 
+**Resume Optimizer** — pick a previously analyzed resume, Gemini rewrites it
+using the stored analysis (scores, summary, strengths, weaknesses,
+suggestions) alongside the resume's own stored text, preserving every factual
+detail (employers, titles, dates, degrees) while improving wording and
+structure. Result is displayed, not persisted. Deliberately minimal for this
+sprint — **no** export, download, version history, side-by-side comparison,
+editing, chat, or multiple optimization modes. Only analyses that have a
+stored `resume_text` are selectable — see Persistence.
+
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
-stored: its text is extracted in memory and discarded.
+stored. Its extracted text **is** now retained (`resume_text`, added for the
+Resume Optimizer) — a deliberate reversal of this table's original design,
+which discarded it after analysis. The column is nullable and forward-only:
+analyses created before this shipped have no `resume_text` and are simply
+absent from the Optimizer's picker, not treated as broken.
 
 ## Authentication Flow
 
@@ -139,6 +152,7 @@ src/app/
     layout.tsx                 getUser() guard + sidebar shell
     page.tsx                   Overview (greeting + entry point)
     resume-analyzer/page.tsx   Resume Analyzer (maxDuration lives here)
+    resume-optimizer/page.tsx  Resume Optimizer (maxDuration lives here)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
@@ -148,7 +162,10 @@ src/components/
   auth/                        Forms, shared auth UI, auth-actions.ts
   dashboard/                   dashboard-sidebar, dashboard-nav-items, overview,
                                resume-analyzer, resume-dropzone,
-                               analysis-results, resume-analyze-action.ts
+                               analysis-results, resume-analyze-action.ts,
+                               resume-optimizer, resume-picker,
+                               resume-optimization-results,
+                               resume-optimize-action.ts
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
   score-ring.tsx               Shared 0–100 ring (landing + analyzer)
@@ -160,6 +177,7 @@ src/lib/
   supabase/                    client.ts (browser), server.ts (RSC/actions),
                                middleware.ts (session refresh + guards)
   ai/resume-analysis.ts        Gemini client, schema, requestResumeAnalysis
+  ai/resume-optimization.ts    Gemini client, schema, requestResumeOptimization
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -175,8 +193,16 @@ adding a route plus an entry in `dashboard-nav-items.ts`.
 
 `DashboardSidebar` is a client component because the active item is derived from
 `usePathname()`. Overview matches its href exactly; tool routes match by prefix,
-so nested pages still mark their parent active. `dashboardNavItems` lists **only
-shipped destinations** — an entry there is a promise the route works.
+so nested pages still mark their parent active.
+
+`DashboardNavItem` (`dashboard-nav-items.ts`) is a discriminated union on
+`status`. `available` items are real routes — an entry with that status is a
+promise the route works, rendered as a `Link`. `comingSoon` items have no
+`href`/`match` field at all, so a dead link is a compile error rather than a
+convention to remember; they render as non-navigable, `aria-disabled` buttons
+in their own "Coming Soon" `SidebarGroup` below the shipped tools. Shipping a
+planned tool means flipping its `status` to `"available"` and adding
+`href`/`match` — no component code changes.
 
 Collapse behaviour is the block's `offcanvas` default, not `icon`. Icon mode
 requires a `tooltip` on every menu button, and the generated `ui/tooltip.tsx`
@@ -208,17 +234,47 @@ Upload → Validate → Extract → Analyze → Validate → Persist → Render
 6. **Validate** — the response is parsed and checked against
    `resumeAnalysisSchema` (Zod) before being trusted. A malformed response
    surfaces as a user-facing error, never a stored row.
-7. **Persist** — one insert into `resume_analyses`. RLS enforces ownership.
+7. **Persist** — one insert into `resume_analyses`, including the extracted
+   `resume_text` (added for the Optimizer below). RLS enforces ownership.
 8. **Render** — `AnalysisResults` displays two `ScoreRing`s plus the three
    lists, with "Analyze another resume" to reset.
+
+**Resume Optimizer pipeline:**
+
+```
+Select → Fetch → Optimize → Render
+```
+
+1. **Select** — `ResumePicker` lists the caller's own analyses that have a
+   stored `resume_text` (fetched server-side in
+   `dashboard/resume-optimizer/page.tsx`); analyses from before that column
+   existed are absent, with an empty-state pointing at Resume Analyzer if none
+   qualify.
+2. **Submit** — `ResumeOptimizer` owns the phase machine
+   (`select → optimizing → results`) and calls the `optimizeResume` Server
+   Action with the chosen analysis's id.
+3. **Server guard** — the action re-runs `getUser()`, validates the id is a
+   UUID, and re-fetches the full row itself rather than trusting anything the
+   client sent — RLS scopes the fetch to the caller's own rows, so a foreign
+   or nonexistent id resolves to the same generic "not found" error either way.
+4. **Optimize** — `requestResumeOptimization` sends Gemini both the stored
+   `resume_text` and the stored analysis (scores, summary, strengths,
+   weaknesses, suggestions), instructed to preserve every factual detail
+   exactly and improve only wording, structure, and framing — a prompt-level
+   mitigation, not a guarantee, against the model altering facts it was given.
+5. **Validate** — the response is parsed and checked against
+   `resumeOptimizationSchema` (Zod) before being trusted.
+6. **Render** — `ResumeOptimizationResults` displays the rewritten resume as
+   preformatted text, with "Try another resume" to reset. Nothing is written
+   back to the database — the result is not persisted.
 
 **Database.** One table, `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
-`suggestions` (jsonb), `created_at`. RLS enabled with INSERT and SELECT
-policies scoped to `authenticated`, plus an index on
-`(user_id, created_at desc)`. No UPDATE/DELETE policy — with RLS on, the
-absence of a policy is the denial.
+`suggestions` (jsonb), `resume_text` (nullable, forward-only — added by
+migration `0002`), `created_at`. RLS enabled with INSERT and SELECT policies
+scoped to `authenticated`, plus an index on `(user_id, created_at desc)`. No
+UPDATE/DELETE policy — with RLS on, the absence of a policy is the denial.
 
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.
@@ -290,11 +346,20 @@ with `pnpm dlx shadcn@latest add <component>`.
   landing page for everyone.
 - Task 2 (dashboard shell + sidebar navigation) is implemented: shadcn `sidebar`
   block, Overview at `/dashboard`, analyzer at `/dashboard/resume-analyzer`,
-  `WelcomeScreen` deleted. Static gates pass; the signed-out redirect is
-  verified. **The signed-in pass is still outstanding** — nothing behind the
-  login has been exercised in a browser yet.
+  `WelcomeScreen` deleted.
+- Sprint 6.1 (dashboard navigation expansion) is implemented: `dashboardNavItems`
+  is a discriminated union on `status` (`available` vs `comingSoon`), with
+  `ats-checker`, `cover-letter`, and `career-insights` listed in a "Coming Soon"
+  `SidebarGroup`.
+- Sprint 6.2 (Resume Optimizer foundation) is implemented: `resume_text` added
+  to `resume_analyses` (migration `0002`, forward-only), `resume-optimize-action.ts`
+  - `lib/ai/resume-optimization.ts` + the optimizer route/components, and
+    `resume-optimizer` flipped from `comingSoon` to `available`. Migration
+    `0002` has been applied to the live Supabase project, and the signed-in
+    flow is verified end to end: a new analysis persists with its
+    `resume_text`, and the Optimizer lists and rewrites it.
 
-**Planned** — Resume Optimizer · ATS Checker · Cover Letter · Career Insights.
+**Planned** — ATS Checker · Cover Letter · Career Insights.
 
 ## Known Limitations
 
@@ -319,15 +384,23 @@ with `pnpm dlx shadcn@latest add <component>`.
   boundary itself. Fixing it at the source means editing a generated file.
 - **No rate limiting on analysis.** A signed-in user can click Analyze
   repeatedly; each click costs an API call and inserts a row.
-- **Analyses are written but never read back.** There is no history UI, so the
-  SELECT policy on `resume_analyses` is currently unexercised.
+- **Analyses have no history/detail UI.** The Resume Optimizer's picker is the
+  first thing to read `resume_analyses` back (exercising the SELECT policy for
+  the first time), but it's a selection list, not a browsing/detail view of
+  past analyses — that still doesn't exist.
+- **The Optimizer only sees analyses run after it shipped.** `resume_text` is
+  nullable and forward-only (migration `0002`); analyses created before that
+  migration have no stored resume text and are absent from the Optimizer's
+  picker, not shown as errors. There is no backfill path — the original text
+  for those rows was never retained.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
-- **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`, but
-  Vercel's Hobby tier caps functions at 10s regardless — a slow analysis will
-  time out there.
+- **`maxDuration = 60`** is set on both `dashboard/resume-analyzer/page.tsx`
+  and `dashboard/resume-optimizer/page.tsx`, but Vercel's Hobby tier caps
+  functions at 10s regardless — a slow analysis or optimization will time out
+  there.
 - **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
   hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
   `/dashboard/resume-analyzer` lands on Overview after signing in rather than
@@ -370,10 +443,11 @@ shell around it.
 
 The most useful thing to understand structurally: **the app shell now exists.**
 `/dashboard` is a guarded sidebar layout with Overview at its root and each tool
-on its own route beneath it. Adding the next feature (Optimizer, ATS Checker,
-Cover Letter, Career Insights) means adding a route under `dashboard/` and an
-entry in `dashboard-nav-items.ts` — nothing structural left to invent. The old
-`WelcomeScreen` two-state toggle has been deleted.
+on its own route beneath it. Resume Analyzer and Resume Optimizer are both
+shipped; adding the next feature (ATS Checker, Cover Letter, Career Insights)
+means adding a route under `dashboard/` and flipping its `dashboard-nav-items.ts`
+entry from `comingSoon` to `available` — nothing structural left to invent. The
+old `WelcomeScreen` two-state toggle has been deleted.
 
 Before building anything new, read the **first** Known Limitation. The
 middleware has never executed, which means the documented auth model and the

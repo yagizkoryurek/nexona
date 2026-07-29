@@ -71,6 +71,19 @@ export function NavbarMobileMenu({ className }: NavbarMobileMenuProps) {
     return () => query.removeEventListener("change", onChange);
   }, []);
 
+  // The panel now covers the full remaining viewport; without this the page
+  // underneath keeps scrolling behind what's meant to read as an isolated
+  // surface.
+  React.useEffect(() => {
+    if (!open) return;
+
+    const { overflow } = document.body.style;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = overflow;
+    };
+  }, [open]);
+
   return (
     <>
       <Button
@@ -104,56 +117,65 @@ export function NavbarMobileMenu({ className }: NavbarMobileMenuProps) {
       </Button>
 
       {/*
-        The 0fr -> 1fr grid row is what makes the height animatable; `inert`
-        keeps the collapsed panel out of the tab order and accessibility tree.
+        Opaque and full-height so the panel is a true isolated surface: it must
+        span every pixel below the header, or the Hero (and its own "Get
+        Started" CTA, which intentionally shares the navbar's label) is visible
+        right beneath it.
+
+        Positioned `absolute`, not `fixed`: the header carries `backdrop-blur`,
+        and an element with a backdrop-filter is a containing block for fixed
+        descendants — a fixed panel would resolve against the 4rem header
+        instead of the viewport. `top-full` puts it at the header's bottom edge
+        and the explicit height fills what remains.
+
+        `inert` keeps the closed panel out of the tab order and accessibility
+        tree; `pointer-events-none` is the belt-and-braces for it, since a
+        full-viewport transparent overlay would otherwise swallow every click.
       */}
       <div
         ref={panelRef}
         id={panelId}
         inert={!open}
         className={cn(
-          "absolute inset-x-0 top-full grid overflow-hidden border-b",
-          "bg-background/95 supports-[backdrop-filter]:bg-background/80 backdrop-blur-md",
-          "transition-[grid-template-rows,opacity,border-color] duration-300 ease-out",
+          "bg-background absolute inset-x-0 top-full h-[calc(100dvh-4rem)] overflow-y-auto border-t",
+          "transition-opacity duration-200 ease-out",
           "motion-reduce:transition-none md:hidden",
           open
-            ? "border-border grid-rows-[1fr] opacity-100 shadow-sm"
-            : "grid-rows-[0fr] border-transparent opacity-0",
+            ? "border-border opacity-100"
+            : "pointer-events-none border-transparent opacity-0",
         )}
       >
-        <div className="overflow-hidden">
-          <nav aria-label="Mobile" className="px-4 pt-2 pb-6 sm:px-6">
-            <ul className="flex flex-col">
-              {navItems.map((item) => (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    onClick={close}
-                    className={cn(
-                      "text-muted-foreground hover:text-foreground hover:bg-muted block rounded-md px-3 py-2.5 text-base font-medium transition-colors",
-                      "focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2",
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+        <nav aria-label="Mobile" className="px-4 pt-6 pb-6 sm:px-6">
+          <ul className="flex flex-col">
+            {navItems.map((item) => (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  onClick={close}
+                  className={cn(
+                    "text-muted-foreground hover:text-foreground hover:bg-muted block rounded-md px-3 py-2.5 text-base font-medium transition-colors",
+                    "focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-2",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
 
-            <div className="mt-4 flex flex-col gap-2">
-              <Button asChild variant="ghost" size="lg" className="w-full">
-                <Link href={signInItem.href} onClick={close}>
-                  {signInItem.label}
-                </Link>
-              </Button>
-              <Button asChild size="lg" className="w-full">
-                <Link href={getStartedItem.href} onClick={close}>
-                  {getStartedItem.label}
-                </Link>
-              </Button>
-            </div>
-          </nav>
-        </div>
+          <div className="border-border mt-6 flex flex-col gap-2 border-t pt-6">
+            <Button asChild variant="ghost" size="lg" className="w-full">
+              <Link href={signInItem.href} onClick={close}>
+                {signInItem.label}
+              </Link>
+            </Button>
+            <Button asChild size="lg" className="w-full">
+              <Link href={getStartedItem.href} onClick={close}>
+                {getStartedItem.label}
+              </Link>
+            </Button>
+          </div>
+        </nav>
       </div>
     </>
   );

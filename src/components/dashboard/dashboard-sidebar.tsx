@@ -11,8 +11,10 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -36,6 +38,13 @@ export function DashboardSidebar() {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
 
+  const availableItems = dashboardNavItems.filter(
+    (item) => item.status === "available",
+  );
+  const comingSoonItems = dashboardNavItems.filter(
+    (item) => item.status === "comingSoon",
+  );
+
   return (
     <Sidebar>
       {/*
@@ -55,11 +64,11 @@ export function DashboardSidebar() {
             */}
             <nav aria-label="Dashboard">
               <SidebarMenu>
-                {dashboardNavItems.map((item) => {
+                {availableItems.map((item) => {
                   const active = isNavItemActive(item, pathname);
 
                   return (
-                    <SidebarMenuItem key={item.href}>
+                    <SidebarMenuItem key={item.id}>
                       <SidebarMenuButton asChild isActive={active}>
                         <Link
                           href={item.href}
@@ -77,6 +86,44 @@ export function DashboardSidebar() {
                 })}
               </SidebarMenu>
             </nav>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        {/*
+          Not-yet-built tools. Real <button>s with no `href` at all — the type
+          system makes a dead link here a compile error, not a convention to
+          remember. `aria-disabled` (not the `disabled` attribute) is what
+          `sidebarMenuButtonVariants` keys its dimmed styling off of, and,
+          unlike `disabled`, still leaves the button focusable — a native
+          `disabled` button is skipped by Tab entirely, which would hide the
+          roadmap from keyboard and screen-reader users that sighted users can
+          see. `pointer-events-none` in that same variant already blocks mouse
+          clicks; the handlers below are the keyboard-equivalent guard, since
+          `pointer-events-none` has no effect on Enter/Space activation.
+        */}
+        <SidebarGroup>
+          <SidebarGroupLabel>Coming Soon</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {comingSoonItems.map((item) => (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton
+                    aria-disabled="true"
+                    tabIndex={0}
+                    onClick={(event) => event.preventDefault()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                      }
+                    }}
+                  >
+                    <item.icon aria-hidden="true" />
+                    <span>{item.label}</span>
+                    <SidebarMenuBadge>Soon</SidebarMenuBadge>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

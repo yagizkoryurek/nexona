@@ -61,9 +61,20 @@ export async function analyzeResume(
     strengths: analysis.strengths,
     weaknesses: analysis.weaknesses,
     suggestions: analysis.suggestions,
+    // Persisted so the Resume Optimizer can later rewrite the real resume,
+    // not just react to the AI's summary of it. See migration 0002 and
+    // CLAUDE.md's Persistence section for why this reverses the table's
+    // original "never store resume text" design.
+    resume_text: extraction.text,
   });
 
   if (insertError) {
+    // Log the real Postgres error — without this the cause is invisible, since
+    // the user-facing string deliberately says nothing about the database.
+    // A schema mismatch here (e.g. an unapplied migration) is indistinguishable
+    // from a transient failure otherwise, and "Please try again" never fixes it.
+    console.error("Failed to save resume analysis:", insertError);
+
     return {
       error: "Analysis succeeded but couldn't be saved. Please try again.",
     };

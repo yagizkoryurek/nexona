@@ -1,9 +1,19 @@
-import { LayoutDashboard, ScanSearch, type LucideIcon } from "lucide-react";
+import {
+  Compass,
+  FileText,
+  LayoutDashboard,
+  ScanSearch,
+  ShieldCheck,
+  Wand2,
+  type LucideIcon,
+} from "lucide-react";
 
-export type DashboardNavItem = {
+type AvailableNavItem = {
+  id: string;
   label: string;
-  href: string;
   icon: LucideIcon;
+  status: "available";
+  href: string;
   /**
    * Exact-match routes are active only on themselves. Overview sits at the
    * root of the section, so a prefix test would light it up on every child
@@ -13,30 +23,71 @@ export type DashboardNavItem = {
   match: "exact" | "prefix";
 };
 
+type ComingSoonNavItem = {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  status: "comingSoon";
+};
+
+export type DashboardNavItem = AvailableNavItem | ComingSoonNavItem;
+
 /**
  * Single source of truth for dashboard navigation.
  *
- * Only shipped destinations belong here — an entry in this list is a promise
- * that the route exists and works. Planned tools (Optimizer, ATS Checker,
- * Cover Letter, Career Insights) get added as they ship.
+ * `available` items are real, working routes — an entry with that status is
+ * a promise the route exists. `comingSoon` items have no `href` at all, so a
+ * dead link is a compile error rather than something to remember not to do;
+ * they render as non-navigable placeholders until they ship, at which point
+ * an item moves to `status: "available"` and gains `href`/`match`.
  */
 export const dashboardNavItems: DashboardNavItem[] = [
   {
+    id: "overview",
     label: "Overview",
-    href: "/dashboard",
     icon: LayoutDashboard,
+    status: "available",
+    href: "/dashboard",
     match: "exact",
   },
   {
+    id: "resume-analyzer",
     label: "Resume Analyzer",
-    href: "/dashboard/resume-analyzer",
     icon: ScanSearch,
+    status: "available",
+    href: "/dashboard/resume-analyzer",
     match: "prefix",
+  },
+  {
+    id: "resume-optimizer",
+    label: "Resume Optimizer",
+    icon: Wand2,
+    status: "available",
+    href: "/dashboard/resume-optimizer",
+    match: "prefix",
+  },
+  {
+    id: "ats-checker",
+    label: "ATS Compatibility Check",
+    icon: ShieldCheck,
+    status: "comingSoon",
+  },
+  {
+    id: "cover-letter",
+    label: "Cover Letter Generator",
+    icon: FileText,
+    status: "comingSoon",
+  },
+  {
+    id: "career-insights",
+    label: "AI Career Insights",
+    icon: Compass,
+    status: "comingSoon",
   },
 ];
 
 /** Whether `pathname` should mark `item` as the current page. */
-export function isNavItemActive(item: DashboardNavItem, pathname: string) {
+export function isNavItemActive(item: AvailableNavItem, pathname: string) {
   if (item.match === "exact") {
     return pathname === item.href;
   }
