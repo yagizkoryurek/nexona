@@ -16,10 +16,12 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  SidebarSeparator,
   useSidebar,
 } from "@/components/ui/sidebar";
 
 import { dashboardNavItems, isNavItemActive } from "./dashboard-nav-items";
+import { VisitWebsiteLink } from "./visit-website-link";
 
 /**
  * Persistent navigation for everything behind sign-in.
@@ -36,8 +38,12 @@ export function DashboardSidebar() {
 
   return (
     <Sidebar>
+      {/*
+        Points at the app's own home, not the marketing site — leaving the app
+        is an explicit, labelled action in the footer instead.
+      */}
       <SidebarHeader className="px-4 py-5">
-        <NavbarBrand />
+        <NavbarBrand href="/dashboard" />
       </SidebarHeader>
 
       <SidebarContent>
@@ -76,6 +82,8 @@ export function DashboardSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="p-4">
+        <VisitWebsiteLink />
+        <SidebarSeparator className="my-1" />
         <SignOutButton />
       </SidebarFooter>
 
