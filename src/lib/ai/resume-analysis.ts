@@ -1,12 +1,7 @@
-import { GoogleGenAI, Type, type Schema } from "@google/genai";
+import { Type, type Schema } from "@google/genai";
 import { z } from "zod";
 
-// One client per server process — no per-request state, so a per-call
-// instance (unlike the Supabase server client, which is cookie-scoped) would
-// just be wasted setup.
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const MODEL = "gemini-3.6-flash";
+import { requestStructuredJson } from "./gemini";
 
 export const resumeAnalysisSchema = z.object({
   overallScore: z.number().int().min(0).max(100),
@@ -80,24 +75,16 @@ const RESPONSE_SCHEMA: Schema = {
  * schema the model must conform to) rather than parsing free text out of a
  * prompt — the reliable way to get structured data back from an LLM. The
  * result is still validated against `resumeAnalysisSchema` before being
- * trusted.
+ * trusted. See `./gemini` for the shared call sequence.
  */
 export async function requestResumeAnalysis(
   resumeText: string,
 ): Promise<ResumeAnalysis> {
-  const response = await genai.models.generateContent({
-    model: MODEL,
+  return requestStructuredJson({
+    schema: resumeAnalysisSchema,
+    responseSchema: RESPONSE_SCHEMA,
+    systemInstruction: SYSTEM_PROMPT,
     contents: `Review this resume and return your analysis.\n\nResume text:\n\n${resumeText}`,
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
-    },
+    emptyResponseError: "The model did not return a structured analysis.",
   });
-
-  if (!response.text) {
-    throw new Error("The model did not return a structured analysis.");
-  }
-
-  return resumeAnalysisSchema.parse(JSON.parse(response.text));
 }

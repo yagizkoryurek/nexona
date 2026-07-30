@@ -70,7 +70,9 @@ export const dashboardNavItems: DashboardNavItem[] = [
     id: "ats-checker",
     label: "ATS Compatibility Check",
     icon: ShieldCheck,
-    status: "comingSoon",
+    status: "available",
+    href: "/dashboard/ats-checker",
+    match: "prefix",
   },
   {
     id: "cover-letter",

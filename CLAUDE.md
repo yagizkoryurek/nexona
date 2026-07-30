@@ -74,13 +74,33 @@ sprint — **no** export, download, version history, side-by-side comparison,
 editing, chat, or multiple optimization modes. Only analyses that have a
 stored `resume_text` are selectable — see Persistence.
 
+**ATS Compatibility Check** — pick a previously analyzed resume and Gemini
+produces a detailed, **qualitative** ATS audit of it: an executive summary,
+four status-graded sections (formatting, section structure, keywords,
+readability), present/missing keywords, missing sections, ATS blockers ranked
+by severity, and priority-ranked recommendations. Persisted to `ats_audits`.
+
+**It deliberately does not produce a score.** The ATS Score already stored on
+the analysis is the single source of truth and is displayed here labelled with
+its provenance ("from your resume analysis"); Gemini is never shown that number
+and never asked for one. Two independent scores for the same resume would
+legitimately disagree between calls, so the audit explains the existing score
+rather than competing with it. Re-opening an audited resume serves the stored
+audit with no model call; "Run a fresh audit" appends a new one.
+
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
 stored. Its extracted text **is** now retained (`resume_text`, added for the
 Resume Optimizer) — a deliberate reversal of this table's original design,
 which discarded it after analysis. The column is nullable and forward-only:
 analyses created before this shipped have no `resume_text` and are simply
-absent from the Optimizer's picker, not treated as broken.
+absent from the Optimizer's and ATS Check's pickers, not treated as broken.
+
+ATS audits are written to a separate `ats_audits` table rather than onto the
+analysis row. That is a security choice, not a modelling one: updating the
+analysis row would require an UPDATE policy on `resume_analyses`, and RLS
+policies are per-row, not per-column — granting it would let a client rewrite
+scores, summary, and `resume_text` too. Both tables stay insert-and-read only.
 
 ## Authentication Flow
 
@@ -153,6 +173,7 @@ src/app/
     page.tsx                   Overview (greeting + entry point)
     resume-analyzer/page.tsx   Resume Analyzer (maxDuration lives here)
     resume-optimizer/page.tsx  Resume Optimizer (maxDuration lives here)
+    ats-checker/page.tsx       ATS Compatibility Check (maxDuration lives here)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
@@ -165,10 +186,13 @@ src/components/
                                analysis-results, resume-analyze-action.ts,
                                resume-optimizer, resume-picker,
                                resume-optimization-results,
-                               resume-optimize-action.ts
+                               resume-optimize-action.ts,
+                               ats-checker, ats-audit-results,
+                               ats-audit-action.ts,
+                               dashboard-panel, list-panel
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
-  score-ring.tsx               Shared 0–100 ring (landing + analyzer)
+  score-ring.tsx               Shared 0–100 ring (landing + analyzer + ATS)
   decorative-backdrop.tsx      Shared backdrop (landing + auth + dashboard)
 
 src/hooks/use-mobile.ts        Generated with the sidebar block — DO NOT EDIT
@@ -176,8 +200,10 @@ src/hooks/use-mobile.ts        Generated with the sidebar block — DO NOT EDIT
 src/lib/
   supabase/                    client.ts (browser), server.ts (RSC/actions),
                                middleware.ts (session refresh + guards)
-  ai/resume-analysis.ts        Gemini client, schema, requestResumeAnalysis
-  ai/resume-optimization.ts    Gemini client, schema, requestResumeOptimization
+  ai/gemini.ts                 Shared Gemini client, MODEL, requestStructuredJson
+  ai/resume-analysis.ts        Prompt + schemas, requestResumeAnalysis
+  ai/resume-optimization.ts    Prompt + schemas, requestResumeOptimization
+  ai/ats-audit.ts              Prompt + schemas, requestAtsAudit
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -268,13 +294,84 @@ Select → Fetch → Optimize → Render
    preformatted text, with "Try another resume" to reset. Nothing is written
    back to the database — the result is not persisted.
 
-**Database.** One table, `public.resume_analyses` — `id`, `user_id` (FK to
+**ATS Compatibility Check pipeline:**
+
+```
+Select → Fetch → (stored audit? serve it) → Audit → Validate → Persist → Render
+```
+
+1. **Select** — the same `ResumePicker` under the same eligibility rule as the
+   Optimizer. `dashboard/ats-checker/page.tsx` additionally queries
+   `ats_audits` for the caller's `analysis_id`s and marks already-audited rows
+   with an "Audited" annotation.
+2. **Submit** — `AtsChecker` owns the phase machine
+   (`select → auditing → results`) and calls the `auditResume` Server Action
+   with the chosen id and a `refresh` flag.
+3. **Server guard** — identical to the Optimizer's: re-runs `getUser()`,
+   validates the id is a UUID, re-fetches the row itself under RLS.
+4. **Serve stored** — unless `refresh`, the newest `ats_audits` row for that
+   analysis is read and re-validated with `atsAuditSchema`. A valid one is
+   returned with no model call. **Stored jsonb is re-validated on read, not
+   trusted because it was valid on write** — the audit shape will evolve, so a
+   row that no longer parses falls through to a fresh audit rather than
+   erroring.
+5. **Audit** — `requestAtsAudit` sends Gemini only the stored `resume_text`.
+   The stored `ats_score` is deliberately withheld: showing the model a number
+   to explain would anchor its narrative to that number, which is re-deriving
+   the score by another route. The prompt explicitly forbids emitting any
+   score, percentage, grade, or rating.
+6. **Validate** — checked against `atsAuditSchema` (Zod) before being trusted.
+   Note that `findings`, `blockers`, `missingSections`, and the keyword arrays
+   have **no minimum length** — unlike the analysis schema. An empty array is
+   the good outcome here, and requiring one entry would pressure the model into
+   inventing problems.
+7. **Persist** — one insert into `ats_audits` with `schema_version`. A failed
+   insert is logged and the audit is still returned with `persisted: false`,
+   which the UI surfaces quietly. This diverges from `analyzeResume`, which
+   errors outright on a failed insert — there the stored row _is_ the product.
+8. **Render** — `AtsAuditResults` shows the **stored** `ats_score` in a
+   `ScoreRing` captioned "from your resume analysis", the executive summary,
+   four status-badged section panels, keyword chips, severity-sorted blockers,
+   missing sections, and priority-sorted recommendations. Severity and priority
+   ordering is applied in the component; the model returns its own order.
+
+**Shared AI infrastructure.** `lib/ai/gemini.ts` owns the single `GoogleGenAI`
+client, the `MODEL` constant, and `requestStructuredJson` — the call /
+empty-text guard / `JSON.parse` / Zod-validate sequence every AI module shares.
+Each module keeps its own prompt, Gemini `responseSchema`, and Zod schema.
+`JSON.parse` runs before `schema.parse` on purpose: a truncated response must
+surface as a `SyntaxError` and a wrong-shaped one as a `ZodError`, because the
+Server Actions branch on `error instanceof z.ZodError` to pick their message.
+Changing the model is now a one-line edit in one file.
+
+**Database.** Two tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
 `suggestions` (jsonb), `resume_text` (nullable, forward-only — added by
 migration `0002`), `created_at`. RLS enabled with INSERT and SELECT policies
 scoped to `authenticated`, plus an index on `(user_id, created_at desc)`. No
 UPDATE/DELETE policy — with RLS on, the absence of a policy is the denial.
+
+`public.ats_audits` (migration `0003`) — `id`, `analysis_id` (FK to
+`resume_analyses`, `on delete cascade`), `user_id` (FK to `auth.users`,
+`on delete cascade`), `audit` (jsonb — the whole validated document, so every
+client reads one document and validates it with the same schema),
+`schema_version` (smallint, default 1), `created_at`. Indexes on
+`(analysis_id, created_at desc)` and `(user_id, created_at desc)`. RLS enabled,
+INSERT and SELECT policies, no UPDATE/DELETE.
+
+Two things about that table are deliberate and easy to "simplify" wrongly:
+
+- **No `ats_score` column.** The score lives on `resume_analyses` and is the
+  single source of truth; duplicating it here would recreate the two-competing-
+  scores problem the feature is designed to avoid.
+- **The INSERT policy checks parent ownership**, not just `auth.uid() = user_id`.
+  The foreign key proves the analysis exists, not that the caller owns it —
+  without the `exists (…)` clause a caller could attach rows carrying their own
+  `user_id` to someone else's analysis.
+- **No unique constraint on `analysis_id`.** Re-auditing appends; readers take
+  the newest. Enforcing one audit per analysis would make re-audit an UPDATE,
+  reintroducing the policy problem the separate table exists to avoid.
 
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.
@@ -358,8 +455,17 @@ with `pnpm dlx shadcn@latest add <component>`.
     `0002` has been applied to the live Supabase project, and the signed-in
     flow is verified end to end: a new analysis persists with its
     `resume_text`, and the Optimizer lists and rewrites it.
+- Sprint 6.3 (ATS Compatibility Check) is implemented: `lib/ai/gemini.ts`
+  extracted and both existing AI modules migrated onto it (behavior-preserving,
+  verified — prompts, schemas, request config, and error strings unchanged),
+  migration `0003` adding `ats_audits`, `lib/ai/ats-audit.ts` +
+  `ats-audit-action.ts` + the route/components, `ResumePicker` generalized to
+  serve two tools, `ListPanel` and `DashboardPanel` extracted as shared
+  surfaces, and `ats-checker` flipped from `comingSoon` to `available`.
+  **The audit is qualitative by design and produces no score** — see Current
+  Features.
 
-**Planned** — ATS Checker · Cover Letter · Career Insights.
+**Planned** — Cover Letter · Career Insights.
 
 ## Known Limitations
 
@@ -382,25 +488,39 @@ with `pnpm dlx shadcn@latest add <component>`.
   Rendering it from a Server Component crashes the build with
   `createContext is not a function`. Every consumer currently declares the
   boundary itself. Fixing it at the source means editing a generated file.
-- **No rate limiting on analysis.** A signed-in user can click Analyze
-  repeatedly; each click costs an API call and inserts a row.
-- **Analyses have no history/detail UI.** The Resume Optimizer's picker is the
-  first thing to read `resume_analyses` back (exercising the SELECT policy for
-  the first time), but it's a selection list, not a browsing/detail view of
-  past analyses — that still doesn't exist.
-- **The Optimizer only sees analyses run after it shipped.** `resume_text` is
-  nullable and forward-only (migration `0002`); analyses created before that
-  migration have no stored resume text and are absent from the Optimizer's
-  picker, not shown as errors. There is no backfill path — the original text
+- **No rate limiting on any AI route.** A signed-in user can click Analyze,
+  Optimize, or "Run a fresh audit" repeatedly; each click costs an API call, and
+  Analyze and audit each insert a row. Three surfaces now, up from one. The ATS
+  Check's stored-audit path incidentally avoids the cost on re-open, but
+  "Run a fresh audit" is unthrottled.
+- **No history/detail UI.** Both pickers read `resume_analyses` back, and the
+  ATS Check reads `ats_audits` back, so the SELECT policies are exercised — but
+  these are selection lists, not a browsing or detail view of past analyses and
+  audits. An audit is re-viewable only by re-selecting its analysis in the ATS
+  Check; there is no list of audits as such.
+- **The Optimizer and ATS Check only see analyses run after `resume_text`
+  shipped.** It is nullable and forward-only (migration `0002`); analyses created
+  before that migration have no stored resume text and are absent from both
+  pickers, not shown as errors. There is no backfill path — the original text
   for those rows was never retained.
+- **The ATS audit and the ATS score can disagree.** They come from separate
+  model calls with different inputs — the audit is never shown the score. This
+  is a deliberate improvement on two competing _numbers_, but a resume can still
+  show a high stored score beside a critical-sounding audit. The provenance
+  caption is what keeps that legible; nothing enforces agreement.
+- **The audit's "no score" rule is prompt-level, not structural.** `atsAuditSchema`
+  has no numeric field, so a score cannot be stored or rendered — but the model
+  could still write a number into a prose string like `executiveSummary`. The
+  system prompt forbids it explicitly; that is a mitigation, not a guarantee.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
-- **`maxDuration = 60`** is set on both `dashboard/resume-analyzer/page.tsx`
-  and `dashboard/resume-optimizer/page.tsx`, but Vercel's Hobby tier caps
-  functions at 10s regardless — a slow analysis or optimization will time out
-  there.
+- **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`,
+  `dashboard/resume-optimizer/page.tsx`, and `dashboard/ats-checker/page.tsx`,
+  but Vercel's Hobby tier caps functions at 10s regardless — a slow analysis,
+  optimization, or audit will time out there. Three routes now depend on a
+  timeout that tier does not honor.
 - **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
   hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
   `/dashboard/resume-analyzer` lands on Overview after signing in rather than
@@ -443,11 +563,25 @@ shell around it.
 
 The most useful thing to understand structurally: **the app shell now exists.**
 `/dashboard` is a guarded sidebar layout with Overview at its root and each tool
-on its own route beneath it. Resume Analyzer and Resume Optimizer are both
-shipped; adding the next feature (ATS Checker, Cover Letter, Career Insights)
-means adding a route under `dashboard/` and flipping its `dashboard-nav-items.ts`
-entry from `comingSoon` to `available` — nothing structural left to invent. The
-old `WelcomeScreen` two-state toggle has been deleted.
+on its own route beneath it. Resume Analyzer, Resume Optimizer, and ATS
+Compatibility Check are all shipped; adding the next feature (Cover Letter,
+Career Insights) means adding a route under `dashboard/` and flipping its
+`dashboard-nav-items.ts` entry from `comingSoon` to `available` — nothing
+structural left to invent. The old `WelcomeScreen` two-state toggle has been
+deleted.
+
+The shared surfaces to build on before writing anything new: `lib/ai/gemini.ts`
+(client, model, structured-JSON call), `ResumePicker` (any tool that operates on
+an existing analysis), `DashboardPanel` + `ListPanel` (the card surfaces), and
+`ScoreRing`. A fourth tool should be adding a prompt, a schema, an action, and a
+route — not new infrastructure.
+
+One product principle worth not relitigating: **derived tools explain the stored
+analysis, they do not re-derive it.** The ATS Check was specified to expand on
+the existing ATS score rather than generate its own, because two model calls
+legitimately disagree and two numbers for one resume is a broken experience. Any
+future tool that is tempted to emit a competing score should carry the same
+constraint.
 
 Before building anything new, read the **first** Known Limitation. The
 middleware has never executed, which means the documented auth model and the

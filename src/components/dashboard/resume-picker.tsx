@@ -3,38 +3,53 @@ import { FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 
-export type OptimizableAnalysis = {
+import { DashboardPanel } from "./dashboard-panel";
+
+export type SelectableAnalysis = {
   id: string;
   fileName: string;
   createdAt: string;
   overallScore: number;
   atsScore: number;
+  /**
+   * Optional trailing marker, e.g. "Audited". Lets a tool surface per-row state
+   * without the picker having to know what that state means.
+   */
+  annotation?: string;
 };
 
 type ResumePickerProps = {
-  analyses: OptimizableAnalysis[];
+  analyses: SelectableAnalysis[];
   onSelect: (id: string) => void;
+  /** Shown when nothing is eligible. Tool-specific, so the caller owns it. */
+  emptyStateDescription: string;
 };
 
 /**
- * Lists past analyses eligible for optimization — ones with a stored
- * `resume_text`. Analyses from before that column existed are simply absent
- * from this list, not shown as errors.
+ * Lists past analyses eligible for a tool that operates on an existing one —
+ * those with a stored `resume_text`. Analyses from before that column existed
+ * are simply absent, not shown as errors.
+ *
+ * Shared by the Resume Optimizer and the ATS Compatibility Check: both need
+ * the same list under the same eligibility rule, and differ only in their
+ * empty-state copy and whether rows carry an annotation.
  */
-export function ResumePicker({ analyses, onSelect }: ResumePickerProps) {
+export function ResumePicker({
+  analyses,
+  onSelect,
+  emptyStateDescription,
+}: ResumePickerProps) {
   if (analyses.length === 0) {
     return (
-      <div className="border-border/60 bg-background/60 rounded-2xl border p-6 text-center shadow-sm backdrop-blur-md sm:p-8">
+      <DashboardPanel className="text-center">
         <p className="text-muted-foreground text-sm leading-relaxed text-pretty">
-          You don&apos;t have any analyses eligible for optimization yet.
-          Analyze a resume first, then come back here to generate an improved
-          version of it.
+          {emptyStateDescription}
         </p>
 
         <Button asChild size="lg" className="mt-6 h-11 px-6">
           <Link href="/dashboard/resume-analyzer">Open Resume Analyzer</Link>
         </Button>
-      </div>
+      </DashboardPanel>
     );
   }
 
@@ -66,6 +81,12 @@ export function ResumePicker({ analyses, onSelect }: ResumePickerProps) {
                   Overall {analysis.overallScore} · ATS {analysis.atsScore}
                 </span>
               </span>
+
+              {analysis.annotation && (
+                <span className="border-border/60 text-muted-foreground shrink-0 rounded-full border px-2.5 py-0.5 text-xs">
+                  {analysis.annotation}
+                </span>
+              )}
             </button>
           </li>
         ))}

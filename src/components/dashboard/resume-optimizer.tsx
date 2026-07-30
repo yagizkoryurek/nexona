@@ -2,14 +2,15 @@
 
 import * as React from "react";
 
+import { DashboardPanel } from "./dashboard-panel";
 import { ResumeOptimizationResults } from "./resume-optimization-results";
 import { optimizeResume } from "./resume-optimize-action";
-import { OptimizableAnalysis, ResumePicker } from "./resume-picker";
+import { ResumePicker, type SelectableAnalysis } from "./resume-picker";
 
 type Phase = "select" | "optimizing" | "results";
 
 type ResumeOptimizerProps = {
-  analyses: OptimizableAnalysis[];
+  analyses: SelectableAnalysis[];
 };
 
 /**
@@ -72,13 +73,17 @@ export function ResumeOptimizer({ analyses }: ResumeOptimizerProps) {
 
       <div className="mt-7 w-full">
         {phase === "optimizing" ? (
-          <div className="border-border/60 bg-background/60 rounded-2xl border p-6 text-center shadow-sm backdrop-blur-md sm:p-8">
+          <DashboardPanel className="text-center">
             <p className="text-muted-foreground text-sm">
               Generating your optimized resume…
             </p>
-          </div>
+          </DashboardPanel>
         ) : (
-          <ResumePicker analyses={analyses} onSelect={handleSelect} />
+          <ResumePicker
+            analyses={analyses}
+            onSelect={handleSelect}
+            emptyStateDescription="You don't have any analyses eligible for optimization yet. Analyze a resume first, then come back here to generate an improved version of it."
+          />
         )}
       </div>
     </div>

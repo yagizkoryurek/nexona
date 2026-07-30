@@ -1,14 +1,8 @@
-import { GoogleGenAI, Type, type Schema } from "@google/genai";
+import { Type, type Schema } from "@google/genai";
 import { z } from "zod";
 
+import { requestStructuredJson } from "./gemini";
 import type { ResumeAnalysis } from "./resume-analysis";
-
-// Own client instance, mirroring resume-analysis.ts rather than sharing one:
-// construction is a cheap, stateless one-liner, so a shared client module
-// would be an abstraction with nothing to justify it yet.
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-const MODEL = "gemini-3.6-flash";
 
 export const resumeOptimizationSchema = z.object({
   optimizedResume: z.string().min(1),
@@ -37,6 +31,7 @@ const RESPONSE_SCHEMA: Schema = {
  * Structured output, same reasoning as `requestResumeAnalysis`: constraining
  * the shape is more reliable than parsing free text out of a prompt. Result
  * is still validated against `resumeOptimizationSchema` before being trusted.
+ * See `./gemini` for the shared call sequence.
  */
 export async function requestResumeOptimization(
   resumeText: string,
@@ -64,19 +59,11 @@ Prior review of this resume:
 
 Rewrite the resume per your instructions.`;
 
-  const response = await genai.models.generateContent({
-    model: MODEL,
+  return requestStructuredJson({
+    schema: resumeOptimizationSchema,
+    responseSchema: RESPONSE_SCHEMA,
+    systemInstruction: SYSTEM_PROMPT,
     contents,
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
-    },
+    emptyResponseError: "The model did not return an optimized resume.",
   });
-
-  if (!response.text) {
-    throw new Error("The model did not return an optimized resume.");
-  }
-
-  return resumeOptimizationSchema.parse(JSON.parse(response.text));
 }
