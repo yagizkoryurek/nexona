@@ -78,7 +78,9 @@ export const dashboardNavItems: DashboardNavItem[] = [
     id: "cover-letter",
     label: "Cover Letter Generator",
     icon: FileText,
-    status: "comingSoon",
+    status: "available",
+    href: "/dashboard/cover-letter",
+    match: "prefix",
   },
   {
     id: "career-insights",

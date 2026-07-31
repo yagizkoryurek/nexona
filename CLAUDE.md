@@ -88,19 +88,44 @@ legitimately disagree between calls, so the audit explains the existing score
 rather than competing with it. Re-opening an audited resume serves the stored
 audit with no model call; "Run a fresh audit" appends a new one.
 
+**Cover Letter Generator** — pick a previously analyzed resume, enter a job
+title, optional company name, and job description, and Gemini writes a cover
+letter grounded in that resume's stored text and its analysis (scores,
+summary, strengths, weaknesses, suggestions). Every letter is a new row in
+`cover_letters` — there is no single "the" letter for an analysis to
+overwrite, since one resume can legitimately be applied to many jobs.
+"Generate another" returns to the job form with the same resume and the same
+job details prefilled; "Choose a different resume" resets fully. No history
+view of past letters this sprint (see Known Limitations), though the query to
+list them already exists (`listCoverLetters` in `cover-letter-action.ts`).
+
+**The model is instructed never to invent a professional fact.** Every
+employer, title, date, credential, skill, project, or achievement referenced
+must already appear in the resume text; where the job description asks for
+something the resume doesn't show, the prompt instructs generalizing rather
+than fabricating a specific instance. This is a prompt-level mitigation, not a
+guarantee — see Known Limitations.
+
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
 stored. Its extracted text **is** now retained (`resume_text`, added for the
 Resume Optimizer) — a deliberate reversal of this table's original design,
 which discarded it after analysis. The column is nullable and forward-only:
 analyses created before this shipped have no `resume_text` and are simply
-absent from the Optimizer's and ATS Check's pickers, not treated as broken.
+absent from the Optimizer's, ATS Check's, and Cover Letter Generator's
+pickers, not treated as broken.
 
-ATS audits are written to a separate `ats_audits` table rather than onto the
-analysis row. That is a security choice, not a modelling one: updating the
-analysis row would require an UPDATE policy on `resume_analyses`, and RLS
-policies are per-row, not per-column — granting it would let a client rewrite
-scores, summary, and `resume_text` too. Both tables stay insert-and-read only.
+ATS audits and cover letters are each written to their own separate table
+(`ats_audits`, `cover_letters`) rather than onto the analysis row. That is a
+security choice, not a modelling one: updating the analysis row would require
+an UPDATE policy on `resume_analyses`, and RLS policies are per-row, not
+per-column — granting it would let a client rewrite scores, summary, and
+`resume_text` too. All three tables stay insert-and-read only. `ats_audits`
+and `cover_letters` aren't merged into one table either, despite the identical
+RLS shape: an audit is one jsonb document every client reads the same way, but
+a cover letter's two real inputs (job title, job description) and one output
+(the letter) are naturally their own columns, and a shared table would leave
+half its columns null depending on which kind a row was.
 
 ## Authentication Flow
 
@@ -174,12 +199,13 @@ src/app/
     resume-analyzer/page.tsx   Resume Analyzer (maxDuration lives here)
     resume-optimizer/page.tsx  Resume Optimizer (maxDuration lives here)
     ats-checker/page.tsx       ATS Compatibility Check (maxDuration lives here)
+    cover-letter/page.tsx      Cover Letter Generator (maxDuration lives here)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
                                (present: accordion, button, checkbox, input,
                                label, separator, sheet, sidebar, skeleton,
-                               tooltip)
+                               textarea, tooltip)
   auth/                        Forms, shared auth UI, auth-actions.ts
   dashboard/                   dashboard-sidebar, dashboard-nav-items, overview,
                                resume-analyzer, resume-dropzone,
@@ -189,6 +215,8 @@ src/components/
                                resume-optimize-action.ts,
                                ats-checker, ats-audit-results,
                                ats-audit-action.ts,
+                               cover-letter-generator, cover-letter-job-form,
+                               cover-letter-results, cover-letter-action.ts,
                                dashboard-panel, list-panel
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
@@ -204,6 +232,7 @@ src/lib/
   ai/resume-analysis.ts        Prompt + schemas, requestResumeAnalysis
   ai/resume-optimization.ts    Prompt + schemas, requestResumeOptimization
   ai/ats-audit.ts              Prompt + schemas, requestAtsAudit
+  ai/cover-letter.ts           Prompt + schemas, requestCoverLetter
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -335,6 +364,53 @@ Select → Fetch → (stored audit? serve it) → Audit → Validate → Persist
    missing sections, and priority-sorted recommendations. Severity and priority
    ordering is applied in the component; the model returns its own order.
 
+**Cover Letter Generator pipeline:**
+
+```
+Select → Enter job details → Generate → Validate → Persist → Render
+```
+
+1. **Select** — the same `ResumePicker` under the same eligibility rule as the
+   Optimizer and ATS Check, but with no annotation: a letter is keyed to a job,
+   not a resume, so "already has a letter" doesn't collapse to one boolean per
+   analysis the way "Audited" does.
+2. **Enter job details** — `CoverLetterJobForm` (react-hook-form + Zod,
+   resolved against `coverLetterInputSchema`) collects `jobTitle` (required),
+   `companyName` (optional), and `jobDescription` (required, 50–10,000
+   characters). The only form in the dashboard so far; built inline rather
+   than as a shared wrapper since there is no second consumer yet.
+3. **Submit** — `CoverLetterGenerator` owns the phase machine
+   (`select → details → generating → results`) — one phase more than its
+   siblings, because a job has to be described, not just selected — and calls
+   the `generateCoverLetter` Server Action with the chosen id and the job
+   details.
+4. **Server guard** — re-runs `getUser()`, validates the id is a UUID and the
+   job details against `coverLetterInputSchema` again server-side, re-fetches
+   the row itself under RLS — the same shape as the Optimizer's and ATS
+   Check's guards, extended to a second input the client can't be trusted on.
+5. **Generate** — `requestCoverLetter` sends Gemini the stored `resume_text`,
+   the stored analysis (scores, summary, strengths, weaknesses, suggestions —
+   reused exactly as the Optimizer already does), and the job details. The
+   prompt carries three enforced layers against fabrication: explicit
+   source-of-truth framing (every fact must already appear in the resume text),
+   a structural instruction to generalize rather than invent when the job asks
+   for something the resume doesn't show, and a closing self-check instructing
+   the model to verify its own draft against the resume before finalizing. A
+   missing company name is handled explicitly in the prompt — address the
+   letter generically, never invent a name or emit a placeholder token like
+   `[Company Name]`.
+6. **Validate** — checked against `coverLetterSchema` (Zod, a single `letter`
+   field) before being trusted.
+7. **Persist** — one insert into `cover_letters`, **always a new row** — there
+   is no "check for an existing letter" branch the way the ATS Check has one,
+   because there is no singular "the" letter for an analysis to converge on. A
+   failed insert is logged and the letter is still returned with
+   `persisted: false`, same divergence-and-reasoning as the ATS Check.
+8. **Render** — `CoverLetterResults` displays the letter as preformatted text
+   with the job title/company as a caption. "Generate another" returns to the
+   job form with the same resume and job details prefilled; "Choose a
+   different resume" resets fully.
+
 **Shared AI infrastructure.** `lib/ai/gemini.ts` owns the single `GoogleGenAI`
 client, the `MODEL` constant, and `requestStructuredJson` — the call /
 empty-text guard / `JSON.parse` / Zod-validate sequence every AI module shares.
@@ -344,7 +420,7 @@ surface as a `SyntaxError` and a wrong-shaped one as a `ZodError`, because the
 Server Actions branch on `error instanceof z.ZodError` to pick their message.
 Changing the model is now a one-line edit in one file.
 
-**Database.** Two tables. `public.resume_analyses` — `id`, `user_id` (FK to
+**Database.** Three tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
 `suggestions` (jsonb), `resume_text` (nullable, forward-only — added by
@@ -372,6 +448,34 @@ Two things about that table are deliberate and easy to "simplify" wrongly:
 - **No unique constraint on `analysis_id`.** Re-auditing appends; readers take
   the newest. Enforcing one audit per analysis would make re-audit an UPDATE,
   reintroducing the policy problem the separate table exists to avoid.
+
+`public.cover_letters` (migration `0004`) — `id`, `analysis_id` (FK to
+`resume_analyses`, `on delete cascade`), `user_id` (FK to `auth.users`,
+`on delete cascade`), `job_title`, `company_name` (nullable), `job_description`
+(**stored permanently, not transient** — see below), `letter`, `schema_version`
+(smallint, default 1), `created_at`. Indexes on `(analysis_id, created_at
+desc)` and `(user_id, created_at desc)`. RLS enabled, INSERT (with the same
+parent-ownership `exists (…)` clause as `ats_audits`) and SELECT policies, no
+UPDATE/DELETE.
+
+Two things about that table are deliberate:
+
+- **`job_description` is persisted, not treated as transient input.** Without
+  it, a stored letter has no reconstructable record of what job it was written
+  for beyond `job_title`/`company_name`, and "Generate another" would have
+  nothing to prefill from. Job postings are public listings the user pasted
+  in, not personal data, so none of the sensitivity that argues for discarding
+  `resume_text`-adjacent data applies here. Bounded to 10,000 characters by
+  `coverLetterInputSchema` (application layer), not by a database check
+  constraint — consistent with how `resume_text` and the jsonb columns are
+  validated.
+- **No unique constraint on `analysis_id`, and no versioning scheme beyond
+  "every generation is a new row."** Unlike an ATS audit, where the newest
+  supersedes the old one, a cover letter is keyed to a job, not just a resume —
+  the same analysis can produce many genuinely different letters for many
+  different jobs, all worth keeping at once. A constraint here would let a
+  second job's letter overwrite a first, deleting a still-wanted document
+  rather than an outdated one.
 
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.
@@ -464,8 +568,17 @@ with `pnpm dlx shadcn@latest add <component>`.
   surfaces, and `ats-checker` flipped from `comingSoon` to `available`.
   **The audit is qualitative by design and produces no score** — see Current
   Features.
+- Sprint 6.4 (Cover Letter Generator) is implemented: migration `0004` adding
+  `cover_letters`, `lib/ai/cover-letter.ts` (with `coverLetterInputSchema`
+  bounding job title/company/description length) + `cover-letter-action.ts` +
+  the route/components, a new `CoverLetterJobForm` (the dashboard's first
+  form, react-hook-form + Zod, the shadcn `Textarea` primitive added for it),
+  `ResumePicker` reused with no annotation (a letter is keyed to a job, not a
+  resume — no boolean applies), and `cover-letter` flipped from `comingSoon` to
+  `available`. **Every generation is a new row; there is no "existing letter"
+  branch** — see Current Features and Database.
 
-**Planned** — Cover Letter · Career Insights.
+**Planned** — Career Insights.
 
 ## Known Limitations
 
@@ -489,20 +602,25 @@ with `pnpm dlx shadcn@latest add <component>`.
   `createContext is not a function`. Every consumer currently declares the
   boundary itself. Fixing it at the source means editing a generated file.
 - **No rate limiting on any AI route.** A signed-in user can click Analyze,
-  Optimize, or "Run a fresh audit" repeatedly; each click costs an API call, and
-  Analyze and audit each insert a row. Three surfaces now, up from one. The ATS
-  Check's stored-audit path incidentally avoids the cost on re-open, but
-  "Run a fresh audit" is unthrottled.
-- **No history/detail UI.** Both pickers read `resume_analyses` back, and the
-  ATS Check reads `ats_audits` back, so the SELECT policies are exercised — but
-  these are selection lists, not a browsing or detail view of past analyses and
-  audits. An audit is re-viewable only by re-selecting its analysis in the ATS
-  Check; there is no list of audits as such.
-- **The Optimizer and ATS Check only see analyses run after `resume_text`
-  shipped.** It is nullable and forward-only (migration `0002`); analyses created
-  before that migration have no stored resume text and are absent from both
-  pickers, not shown as errors. There is no backfill path — the original text
-  for those rows was never retained.
+  Optimize, "Run a fresh audit", or Generate cover letter repeatedly; each
+  click costs an API call, and Analyze, audit, and cover letter generation each
+  insert a row. Four surfaces now, up from one. The ATS Check's stored-audit
+  path incidentally avoids the cost on re-open, but "Run a fresh audit" is
+  unthrottled, and every cover letter generation is unthrottled by design (see
+  Current Features — there is no stored-result path to short-circuit).
+- **No history/detail UI.** All three pickers read `resume_analyses` back, and
+  the ATS Check reads `ats_audits` back, so the SELECT policies are exercised —
+  but these are selection lists, not a browsing or detail view of past
+  analyses, audits, or letters. An audit is re-viewable only by re-selecting
+  its analysis in the ATS Check; a cover letter is not re-viewable at all once
+  its phase resets, even though `listCoverLetters` (in `cover-letter-action.ts`)
+  already exists to support a future list view — it is simply not wired into
+  any UI this sprint.
+- **The Optimizer, ATS Check, and Cover Letter Generator only see analyses run
+  after `resume_text` shipped.** It is nullable and forward-only (migration
+  `0002`); analyses created before that migration have no stored resume text
+  and are absent from all three pickers, not shown as errors. There is no
+  backfill path — the original text for those rows was never retained.
 - **The ATS audit and the ATS score can disagree.** They come from separate
   model calls with different inputs — the audit is never shown the score. This
   is a deliberate improvement on two competing _numbers_, but a resume can still
@@ -512,15 +630,21 @@ with `pnpm dlx shadcn@latest add <component>`.
   has no numeric field, so a score cannot be stored or rendered — but the model
   could still write a number into a prose string like `executiveSummary`. The
   system prompt forbids it explicitly; that is a mitigation, not a guarantee.
+- **The cover letter's "no invented facts" rule is prompt-level, not
+  structural.** Nothing in `coverLetterSchema` (a single `letter` string) can
+  enforce that every claim traces back to the resume text — the prompt's
+  three-layer instruction (source-of-truth framing, generalize-don't-invent,
+  a closing self-check) is a mitigation, not a guarantee, exactly like the
+  Optimizer's fact-preservation instruction.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
 - **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`,
-  `dashboard/resume-optimizer/page.tsx`, and `dashboard/ats-checker/page.tsx`,
-  but Vercel's Hobby tier caps functions at 10s regardless — a slow analysis,
-  optimization, or audit will time out there. Three routes now depend on a
-  timeout that tier does not honor.
+  `dashboard/resume-optimizer/page.tsx`, `dashboard/ats-checker/page.tsx`, and
+  `dashboard/cover-letter/page.tsx`, but Vercel's Hobby tier caps functions at
+  10s regardless — a slow analysis, optimization, audit, or letter will time
+  out there. Four routes now depend on a timeout that tier does not honor.
 - **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
   hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
   `/dashboard/resume-analyzer` lands on Overview after signing in rather than
@@ -563,18 +687,21 @@ shell around it.
 
 The most useful thing to understand structurally: **the app shell now exists.**
 `/dashboard` is a guarded sidebar layout with Overview at its root and each tool
-on its own route beneath it. Resume Analyzer, Resume Optimizer, and ATS
-Compatibility Check are all shipped; adding the next feature (Cover Letter,
-Career Insights) means adding a route under `dashboard/` and flipping its
-`dashboard-nav-items.ts` entry from `comingSoon` to `available` — nothing
-structural left to invent. The old `WelcomeScreen` two-state toggle has been
-deleted.
+on its own route beneath it. Resume Analyzer, Resume Optimizer, ATS
+Compatibility Check, and Cover Letter Generator are all shipped; adding the
+next feature (Career Insights) means adding a route under `dashboard/` and
+flipping its `dashboard-nav-items.ts` entry from `comingSoon` to `available` —
+nothing structural left to invent. The old `WelcomeScreen` two-state toggle has
+been deleted.
 
 The shared surfaces to build on before writing anything new: `lib/ai/gemini.ts`
 (client, model, structured-JSON call), `ResumePicker` (any tool that operates on
 an existing analysis), `DashboardPanel` + `ListPanel` (the card surfaces), and
-`ScoreRing`. A fourth tool should be adding a prompt, a schema, an action, and a
-route — not new infrastructure.
+`ScoreRing`. A fifth tool should be adding a prompt, a schema, an action, and a
+route — not new infrastructure, unless it genuinely needs a new input shape the
+way Cover Letter Generator needed a job-details form (in which case build it
+inline first, the way `CoverLetterJobForm` was, rather than generalizing before
+a second consumer exists).
 
 One product principle worth not relitigating: **derived tools explain the stored
 analysis, they do not re-derive it.** The ATS Check was specified to expand on
