@@ -69,10 +69,10 @@ summary, and lists of Strengths, Weaknesses, and Suggestions.
 using the stored analysis (scores, summary, strengths, weaknesses,
 suggestions) alongside the resume's own stored text, preserving every factual
 detail (employers, titles, dates, degrees) while improving wording and
-structure. Result is displayed, not persisted. Deliberately minimal for this
-sprint — **no** export, download, version history, side-by-side comparison,
-editing, chat, or multiple optimization modes. Only analyses that have a
-stored `resume_text` are selectable — see Persistence.
+structure. Result is displayed, not persisted. Deliberately minimal by design —
+**no** export, download, version history, side-by-side comparison, editing,
+chat, or multiple optimization modes. Only analyses that have a stored
+`resume_text` are selectable — see Persistence.
 
 **ATS Compatibility Check** — pick a previously analyzed resume and Gemini
 produces a detailed, **qualitative** ATS audit of it: an executive summary,
@@ -96,8 +96,8 @@ summary, strengths, weaknesses, suggestions). Every letter is a new row in
 overwrite, since one resume can legitimately be applied to many jobs.
 "Generate another" returns to the job form with the same resume and the same
 job details prefilled; "Choose a different resume" resets fully. No history
-view of past letters this sprint (see Known Limitations), though the query to
-list them already exists (`listCoverLetters` in `cover-letter-action.ts`).
+view of past letters yet (see Known Limitations), though the query to list
+them already exists (`listCoverLetters` in `cover-letter-action.ts`).
 
 **The model is instructed never to invent a professional fact.** Every
 employer, title, date, credential, skill, project, or achievement referenced
@@ -232,7 +232,11 @@ src/lib/
   ai/resume-analysis.ts        Prompt + schemas, requestResumeAnalysis
   ai/resume-optimization.ts    Prompt + schemas, requestResumeOptimization
   ai/ats-audit.ts              Prompt + schemas, requestAtsAudit
-  ai/cover-letter.ts           Prompt + schemas, requestCoverLetter
+  ai/cover-letter.ts           Prompt + Gemini call, requestCoverLetter
+  ai/cover-letter-schema.ts    Client-safe Zod schema — imports neither
+                               ./gemini nor ./cover-letter (see AI Architecture)
+  ai/career-insights.ts        Prompt + schemas, requestCareerInsights.
+                               Mid-sprint — no caller wired up yet
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -420,7 +424,28 @@ surface as a `SyntaxError` and a wrong-shaped one as a `ZodError`, because the
 Server Actions branch on `error instanceof z.ZodError` to pick their message.
 Changing the model is now a one-line edit in one file.
 
-**Database.** Three tables. `public.resume_analyses` — `id`, `user_id` (FK to
+**Client/server import boundary.** `lib/ai/gemini.ts` constructs the
+`GoogleGenAI` client at module scope, using `GEMINI_API_KEY` — a server-only
+variable. Any client component that imports a _value_ (not just a type) from a
+module that itself imports `./gemini`, even transitively, bundles that
+construction into the browser and crashes with "API Key must be set when
+running in a browser." This bit the Cover Letter Generator once: its job form
+needed `coverLetterInputSchema` — a Zod schema, a runtime value, for
+`zodResolver` — and that schema originally lived in the same file as
+`requestCoverLetter`. The fix is now the standing convention: **any AI
+module's input-validation schema that a client component needs as a value
+lives in its own dedicated `lib/ai/<tool>-schema.ts` file, importing neither
+`./gemini` nor its sibling AI module.** The AI module imports the schema from
+there for its own use and must not re-export it as a value — only a
+type-only re-export (`export type { ... }`, fully erased at compile time) is
+safe to expose from a module that itself imports `./gemini`. `import type` for
+a _response_ shape (what the model returns, as opposed to what the client
+submits) is always safe regardless of where it's declared, since it carries no
+runtime import. See `lib/ai/cover-letter-schema.ts` for the reference shape,
+and verify a new one the same way it was verified here: after building,
+`grep -rl "GoogleGenAI" .next/static/` must return nothing.
+
+**Database.** Four tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
 `suggestions` (jsonb), `resume_text` (nullable, forward-only — added by
@@ -477,6 +502,37 @@ Two things about that table are deliberate:
   second job's letter overwrite a first, deleting a still-wanted document
   rather than an outdated one.
 
+`public.career_insights` (migration `0005`) — `id`, `analysis_id` (FK to
+`resume_analyses`, `on delete cascade`), `user_id` (FK to `auth.users`,
+`on delete cascade`), `insights` (jsonb — the whole validated document),
+`schema_version` (smallint, default 1), `created_at`. Indexes on
+`(analysis_id, created_at desc)` and `(user_id, created_at desc)`. RLS
+enabled, INSERT (with the same parent-ownership `exists (…)` clause as
+`ats_audits` and `cover_letters`) and SELECT policies, no UPDATE/DELETE.
+**The table exists ahead of the feature** — Career Insights is mid-sprint and
+nothing writes to this table yet.
+
+Two things about that table are deliberate:
+
+- **No numeric column of any kind**, and no copy of `overall_score` or
+  `ats_score`. Career Insights is shown both scores as read-only context for
+  its reasoning, but is instructed never to reinterpret, explain, or derive a
+  new score from them — and `careerInsightsSchema` has no numeric field for
+  one to land in, so nothing scorelike can reach the column. That instruction
+  is a prompt-level mitigation; the absent column is the structural half.
+- **No unique constraint on `analysis_id`** — this follows `ats_audits`, not
+  `cover_letters`. Insights for a resume converge on one answer, so the newest
+  supersedes the older; there is no second axis (the way a letter is keyed to
+  a job) making two concurrent sets legitimately different and both worth
+  keeping. Regeneration appends, and readers take the newest.
+
+`career_insights` is not folded into `ats_audits` with a `kind` discriminator
+despite the identical column shape — which means the `cover_letters` argument
+above (naturally different columns) does not apply here. The reason is
+versioning instead: `schema_version` describes exactly one Zod schema, the two
+documents evolve independently, and in a shared table `schema_version = 2`
+would be ambiguous about which document it versions.
+
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.
 
@@ -506,6 +562,19 @@ Supabase CLI project in this repo. Every migration must be safe to re-run.
   `DecorativeBackdrop`, `cn`, `safeRedirectPath`, `validateResumeFile`).
 - Keep provider-specific code isolated behind a stable function signature, as
   `lib/ai/resume-analysis.ts` does — the Anthropic→Gemini swap touched one file.
+- `lib/ai/gemini.ts` is the single entry point for AI generation — every AI
+  module calls Gemini through its `requestStructuredJson`, never constructs
+  its own client. A schema a client component needs as a value belongs in its
+  own `lib/ai/<tool>-schema.ts`, never in the same file as a `./gemini` import
+  — see AI Architecture's "Client/server import boundary" for why and how to
+  verify it.
+- A new AI-backed tool follows the shape of the existing four (Resume
+  Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter Generator)
+  rather than inventing a new one: a prompt + Zod schema in `lib/ai/`, a Server
+  Action that re-runs `getUser()` and re-validates input server-side, a route
+  that fetches eligibility server-side, and a client phase-machine component.
+  Reach for `requestStructuredJson`, `ResumePicker`, `DashboardPanel` /
+  `ListPanel`, and `ScoreRing` before writing new infrastructure.
 
 **Security**
 
@@ -528,57 +597,15 @@ Supabase CLI project in this repo. Every migration must be safe to re-run.
 **Package manager** — always `pnpm`, never npm/yarn. Add shadcn components
 with `pnpm dlx shadcn@latest add <component>`.
 
-## Current Sprint Status
+## Feature Status
 
-**Completed**
+**Shipped and verified end to end** — Landing page, Authentication, Dashboard
+shell, Resume Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter
+Generator. See Current Features for what each does and AI Architecture for how
+the four AI-backed tools are built.
 
-- Sprint 1 — project foundation
-- Sprint 2A — landing page (all sections)
-- Sprint 2B — authentication UI
-- Sprint 2C — authentication backend (Supabase)
-- Sprint 2D — post-login welcome experience
-- Sprint 3 — resume upload experience
-- Sprint 4 — Resume Analyzer (AI analysis, persistence, results UI)
-
-**Current** — Sprint 5.
-
-- Task 1 (auth routing) is closed: the attempt to redirect authenticated users
-  away from `/` was implemented and then reverted by request. `/` is the public
-  landing page for everyone.
-- Task 2 (dashboard shell + sidebar navigation) is implemented: shadcn `sidebar`
-  block, Overview at `/dashboard`, analyzer at `/dashboard/resume-analyzer`,
-  `WelcomeScreen` deleted.
-- Sprint 6.1 (dashboard navigation expansion) is implemented: `dashboardNavItems`
-  is a discriminated union on `status` (`available` vs `comingSoon`), with
-  `ats-checker`, `cover-letter`, and `career-insights` listed in a "Coming Soon"
-  `SidebarGroup`.
-- Sprint 6.2 (Resume Optimizer foundation) is implemented: `resume_text` added
-  to `resume_analyses` (migration `0002`, forward-only), `resume-optimize-action.ts`
-  - `lib/ai/resume-optimization.ts` + the optimizer route/components, and
-    `resume-optimizer` flipped from `comingSoon` to `available`. Migration
-    `0002` has been applied to the live Supabase project, and the signed-in
-    flow is verified end to end: a new analysis persists with its
-    `resume_text`, and the Optimizer lists and rewrites it.
-- Sprint 6.3 (ATS Compatibility Check) is implemented: `lib/ai/gemini.ts`
-  extracted and both existing AI modules migrated onto it (behavior-preserving,
-  verified — prompts, schemas, request config, and error strings unchanged),
-  migration `0003` adding `ats_audits`, `lib/ai/ats-audit.ts` +
-  `ats-audit-action.ts` + the route/components, `ResumePicker` generalized to
-  serve two tools, `ListPanel` and `DashboardPanel` extracted as shared
-  surfaces, and `ats-checker` flipped from `comingSoon` to `available`.
-  **The audit is qualitative by design and produces no score** — see Current
-  Features.
-- Sprint 6.4 (Cover Letter Generator) is implemented: migration `0004` adding
-  `cover_letters`, `lib/ai/cover-letter.ts` (with `coverLetterInputSchema`
-  bounding job title/company/description length) + `cover-letter-action.ts` +
-  the route/components, a new `CoverLetterJobForm` (the dashboard's first
-  form, react-hook-form + Zod, the shadcn `Textarea` primitive added for it),
-  `ResumePicker` reused with no annotation (a letter is keyed to a job, not a
-  resume — no boolean applies), and `cover-letter` flipped from `comingSoon` to
-  `available`. **Every generation is a new row; there is no "existing letter"
-  branch** — see Current Features and Database.
-
-**Planned** — Career Insights.
+**Planned** — Career Insights, following the same architecture (see
+Development Rules → Architecture).
 
 ## Known Limitations
 
@@ -615,7 +642,7 @@ with `pnpm dlx shadcn@latest add <component>`.
   its analysis in the ATS Check; a cover letter is not re-viewable at all once
   its phase resets, even though `listCoverLetters` (in `cover-letter-action.ts`)
   already exists to support a future list view — it is simply not wired into
-  any UI this sprint.
+  any UI yet.
 - **The Optimizer, ATS Check, and Cover Letter Generator only see analyses run
   after `resume_text` shipped.** It is nullable and forward-only (migration
   `0002`); analyses created before that migration have no stored resume text
@@ -679,20 +706,20 @@ Redirect URLs allowlisting the app origin and `/auth/callback`.
 
 Read this section first in a fresh session.
 
-Nexona is past the scaffolding stage. Authentication, the resume upload flow,
-Gemini-backed analysis, and a Postgres schema with RLS are all live and
-verified working end to end. The landing page is complete. Roughly: the
-product's first real feature ships, and the next phase is building the app
-shell around it.
+Nexona is past the scaffolding stage. Authentication, the dashboard shell, and
+four AI-backed tools sharing one AI infrastructure layer are all live and
+verified end to end. The landing page is complete. The next phase is adding
+further tools (Career Insights) on top of a pattern that now has four
+examples, and closing the Known Limitations below — nothing structural is
+missing for a new tool.
 
-The most useful thing to understand structurally: **the app shell now exists.**
-`/dashboard` is a guarded sidebar layout with Overview at its root and each tool
-on its own route beneath it. Resume Analyzer, Resume Optimizer, ATS
-Compatibility Check, and Cover Letter Generator are all shipped; adding the
-next feature (Career Insights) means adding a route under `dashboard/` and
-flipping its `dashboard-nav-items.ts` entry from `comingSoon` to `available` —
-nothing structural left to invent. The old `WelcomeScreen` two-state toggle has
-been deleted.
+The most useful thing to understand structurally: **the app shell exists, and
+so does the AI tool pattern.** `/dashboard` is a guarded sidebar layout with
+Overview at its root and each tool on its own route beneath it. Resume
+Analyzer, Resume Optimizer, ATS Compatibility Check, and Cover Letter
+Generator are all shipped; adding the next feature (Career Insights) means
+adding a route under `dashboard/` and flipping its `dashboard-nav-items.ts`
+entry from `comingSoon` to `available` — nothing structural left to invent.
 
 The shared surfaces to build on before writing anything new: `lib/ai/gemini.ts`
 (client, model, structured-JSON call), `ResumePicker` (any tool that operates on
@@ -701,7 +728,10 @@ an existing analysis), `DashboardPanel` + `ListPanel` (the card surfaces), and
 route — not new infrastructure, unless it genuinely needs a new input shape the
 way Cover Letter Generator needed a job-details form (in which case build it
 inline first, the way `CoverLetterJobForm` was, rather than generalizing before
-a second consumer exists).
+a second consumer exists). If the new tool's client component needs to import
+any value from its `lib/ai/` module for form validation, put that value in its
+own `<tool>-schema.ts` file first — see AI Architecture's "Client/server import
+boundary."
 
 One product principle worth not relitigating: **derived tools explain the stored
 analysis, they do not re-derive it.** The ATS Check was specified to expand on
@@ -718,11 +748,15 @@ it is deliberately left open rather than folded into an unrelated task.
 Two conventions carry real weight here. First, this project is worked
 **sprint-by-sprint with a review gate** — implement the current task, stop,
 and wait. Do not build ahead, and do not make architectural calls without
-asking. Second, **verify at runtime**. Three separate bugs in this codebase
+asking. Second, **verify at runtime**. Four separate bugs in this codebase
 passed `typecheck` and `build` and failed only when actually executed: a Radix
 client-boundary crash, `unpdf` rejecting a Node `Buffer` that satisfied its
-TypeScript type, and a `pdf-parse` worker that could not resolve. Run the
-thing.
+TypeScript type, a `pdf-parse` worker that could not resolve, and a client
+component pulling `GoogleGenAI`'s server-only construction into the browser
+bundle through a shared schema import. Run the thing — and for anything
+touching the AI layer, grep the built `.next/static/` output for `GoogleGenAI`
+too, since that failure mode is invisible to both type checking and a
+successful build.
 
 When adding a dependency, read its shipped type declarations in
 `node_modules` before writing the call — the installed API has diverged from
