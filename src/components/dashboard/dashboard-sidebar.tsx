@@ -100,32 +100,38 @@ export function DashboardSidebar() {
           see. `pointer-events-none` in that same variant already blocks mouse
           clicks; the handlers below are the keyboard-equivalent guard, since
           `pointer-events-none` has no effect on Enter/Space activation.
+
+          The whole group is conditional because shipping the last planned tool
+          empties it: without this, flipping the final `comingSoon` item to
+          `available` leaves a "Coming Soon" heading standing over nothing.
         */}
-        <SidebarGroup>
-          <SidebarGroupLabel>Coming Soon</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {comingSoonItems.map((item) => (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    aria-disabled="true"
-                    tabIndex={0}
-                    onClick={(event) => event.preventDefault()}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                      }
-                    }}
-                  >
-                    <item.icon aria-hidden="true" />
-                    <span>{item.label}</span>
-                    <SidebarMenuBadge>Soon</SidebarMenuBadge>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {comingSoonItems.length > 0 && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Coming Soon</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {comingSoonItems.map((item) => (
+                  <SidebarMenuItem key={item.id}>
+                    <SidebarMenuButton
+                      aria-disabled="true"
+                      tabIndex={0}
+                      onClick={(event) => event.preventDefault()}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                        }
+                      }}
+                    >
+                      <item.icon aria-hidden="true" />
+                      <span>{item.label}</span>
+                      <SidebarMenuBadge>Soon</SidebarMenuBadge>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="p-4">

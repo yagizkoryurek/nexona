@@ -106,26 +106,56 @@ something the resume doesn't show, the prompt instructs generalizing rather
 than fabricating a specific instance. This is a prompt-level mitigation, not a
 guarantee — see Known Limitations.
 
+**Career Insights** — pick a previously analyzed resume and Gemini assesses
+the candidate's professional position: how the profile reads, recurring
+strength themes with the resume evidence behind each, roles it already
+supports (graded `strong` / `possible` / `stretch`), skill gaps holding it
+back, and prioritized next steps. Resume-only by design — there is no
+target-role or career-goal input; a future sprint may add one, but this tool
+does not attempt to guess intent beyond what the resume itself shows.
+Persisted to `career_insights`. Re-opening an already-generated resume serves
+the stored insights with no model call; "Generate again" appends a new one —
+the same stored-result caching and append-only shape as the ATS Check, not the
+Cover Letter Generator's always-a-new-row model, because insights for a resume
+converge on one answer rather than varying per job.
+
+**The stored `overall_score` and `ats_score` are passed to the model as
+read-only context, never as this tool's subject.** They inform the model's
+reasoning about the resume's history, but the prompt explicitly forbids
+reinterpreting them, explaining them, deriving a new score from them, or
+letting them dominate its conclusions — conclusions must come primarily from
+the resume text itself. This is a prompt-level mitigation, not a guarantee;
+`careerInsightsSchema` has no numeric field at all, which is the structural
+half of the same containment. The UI never renders either score — no
+`ScoreRing`, no number anywhere in this tool's results — since re-displaying
+them here would invite exactly the "explain the number" reading the prompt
+forbids. Career Insights is also instructed never to invent a professional
+fact absent from the resume, same mitigation as the Optimizer and Cover Letter
+Generator.
+
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
 stored. Its extracted text **is** now retained (`resume_text`, added for the
 Resume Optimizer) — a deliberate reversal of this table's original design,
 which discarded it after analysis. The column is nullable and forward-only:
 analyses created before this shipped have no `resume_text` and are simply
-absent from the Optimizer's, ATS Check's, and Cover Letter Generator's
-pickers, not treated as broken.
+absent from the Optimizer's, ATS Check's, Cover Letter Generator's, and Career
+Insights' pickers, not treated as broken.
 
-ATS audits and cover letters are each written to their own separate table
-(`ats_audits`, `cover_letters`) rather than onto the analysis row. That is a
-security choice, not a modelling one: updating the analysis row would require
-an UPDATE policy on `resume_analyses`, and RLS policies are per-row, not
-per-column — granting it would let a client rewrite scores, summary, and
-`resume_text` too. All three tables stay insert-and-read only. `ats_audits`
-and `cover_letters` aren't merged into one table either, despite the identical
-RLS shape: an audit is one jsonb document every client reads the same way, but
-a cover letter's two real inputs (job title, job description) and one output
-(the letter) are naturally their own columns, and a shared table would leave
-half its columns null depending on which kind a row was.
+ATS audits, cover letters, and career insights are each written to their own
+separate table (`ats_audits`, `cover_letters`, `career_insights`) rather than
+onto the analysis row. That is a security choice, not a modelling one:
+updating the analysis row would require an UPDATE policy on `resume_analyses`,
+and RLS policies are per-row, not per-column — granting it would let a client
+rewrite scores, summary, and `resume_text` too. All four tables stay
+insert-and-read only. None of the three are merged into one table either,
+despite `ats_audits` and `career_insights` sharing an identical column shape:
+an audit or an insights document is one jsonb document every client reads the
+same way, but a cover letter's two real inputs (job title, job description)
+and one output (the letter) are naturally their own columns, and a shared
+table would leave half its columns null depending on which kind a row was.
+`ats_audits` and `career_insights` stay separate from each other too, despite
+that identical shape — see Database for why (versioning, not columns).
 
 ## Authentication Flow
 
@@ -200,6 +230,7 @@ src/app/
     resume-optimizer/page.tsx  Resume Optimizer (maxDuration lives here)
     ats-checker/page.tsx       ATS Compatibility Check (maxDuration lives here)
     cover-letter/page.tsx      Cover Letter Generator (maxDuration lives here)
+    career-insights/page.tsx   Career Insights (maxDuration lives here)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
@@ -217,6 +248,9 @@ src/components/
                                ats-audit-action.ts,
                                cover-letter-generator, cover-letter-job-form,
                                cover-letter-results, cover-letter-action.ts,
+                               career-insights-generator,
+                               career-insights-results,
+                               career-insights-action.ts,
                                dashboard-panel, list-panel
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
@@ -235,8 +269,7 @@ src/lib/
   ai/cover-letter.ts           Prompt + Gemini call, requestCoverLetter
   ai/cover-letter-schema.ts    Client-safe Zod schema — imports neither
                                ./gemini nor ./cover-letter (see AI Architecture)
-  ai/career-insights.ts        Prompt + schemas, requestCareerInsights.
-                               Mid-sprint — no caller wired up yet
+  ai/career-insights.ts        Prompt + schemas, requestCareerInsights
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -415,6 +448,66 @@ Select → Enter job details → Generate → Validate → Persist → Render
    job form with the same resume and job details prefilled; "Choose a
    different resume" resets fully.
 
+**Career Insights pipeline:**
+
+```
+Select → Fetch → (stored insights? serve them) → Generate → Validate → Persist → Render
+```
+
+1. **Select** — the same `ResumePicker` under the same eligibility rule as the
+   other three. `dashboard/career-insights/page.tsx` additionally queries
+   `career_insights` for the caller's `analysis_id`s and marks already-generated
+   rows with an "Insights ready" annotation. Resume-only, by design: unlike the
+   Cover Letter Generator there is no second input phase — no target-role or
+   career-goal field — so the phase machine has one fewer phase than that tool.
+2. **Submit** — `CareerInsightsGenerator` owns the phase machine
+   (`select → generating → results`) and calls the `generateCareerInsights`
+   Server Action with the chosen id and a `refresh` flag. Structurally this is
+   the ATS Check's shape, not the Cover Letter Generator's: an artifact keyed
+   to a resume alone, not to a resume-plus-job, converges on one current
+   answer rather than many equally valid ones.
+3. **Server guard** — identical to the other three: re-runs `getUser()`,
+   validates the id is a UUID, re-fetches the row itself under RLS — this time
+   selecting `overall_score` and `ats_score` alongside the rest, since this
+   pipeline (unlike the ATS Check's) passes both scores through as context.
+4. **Serve stored** — unless `refresh`, the newest `career_insights` row for
+   that analysis is read and re-validated with `careerInsightsSchema`. A valid
+   one is returned with no model call. Stored jsonb is re-validated on read,
+   not trusted because it was valid on write, same reasoning as the ATS
+   Check's cache: the shape will evolve, so a row that no longer parses falls
+   through to fresh generation rather than erroring.
+5. **Generate** — `requestCareerInsights` sends Gemini the stored `resume_text`
+   plus the full stored analysis, including `overall_score` and `ats_score`.
+   This is the one deliberate divergence from the ATS Check's pattern: the ATS
+   Check withholds `ats_score` outright so the model cannot anchor to a number
+   it was asked to explain; here the scores are relevant context for career
+   direction, so they are passed through but explicitly fenced — the prompt
+   states they are contextual only and forbids reinterpreting, explaining,
+   regenerating, or letting them dominate the reasoning, which must come
+   primarily from the resume text. The prompt also forbids any score,
+   percentage, grade, salary figure, or market/demand statistic in the output,
+   and requires every conclusion to trace to specific resume content.
+6. **Validate** — checked against `careerInsightsSchema` (Zod) before being
+   trusted. The minimums are split deliberately, not copied from the ATS
+   audit's blanket rule: `strengthThemes`, `suitableRoles`, and `nextSteps`
+   are the deliverable, so each requires at least one entry, while `skillGaps`
+   has no minimum — a genuinely well-rounded profile may have none worth
+   naming, and requiring one would pressure the model into inventing a
+   weakness, the same reasoning as the audit's `blockers`.
+7. **Persist** — one insert into `career_insights` with `schema_version`. A
+   failed insert is logged and the insights are still returned with
+   `persisted: false`, same divergence-and-reasoning as the ATS Check and
+   Cover Letter Generator.
+8. **Render** — `CareerInsightsResults` shows the positioning summary,
+   strength themes with their resume evidence, suitable roles (fit-sorted,
+   `strong` first), skill gaps (impact-sorted, with an explicit "no significant
+   gaps" state when the array is empty — that emptiness is the good outcome,
+   not a blank panel), and next steps (priority-sorted). Sort ordering is
+   applied in the component; the model returns its own order, same convention
+   as the ATS Check. Deliberately **no `ScoreRing` and no score anywhere** —
+   see Current Features for why re-displaying the stored scores here would
+   undercut the containment the prompt enforces.
+
 **Shared AI infrastructure.** `lib/ai/gemini.ts` owns the single `GoogleGenAI`
 client, the `MODEL` constant, and `requestStructuredJson` — the call /
 empty-text guard / `JSON.parse` / Zod-validate sequence every AI module shares.
@@ -509,8 +602,6 @@ Two things about that table are deliberate:
 `(analysis_id, created_at desc)` and `(user_id, created_at desc)`. RLS
 enabled, INSERT (with the same parent-ownership `exists (…)` clause as
 `ats_audits` and `cover_letters`) and SELECT policies, no UPDATE/DELETE.
-**The table exists ahead of the feature** — Career Insights is mid-sprint and
-nothing writes to this table yet.
 
 Two things about that table are deliberate:
 
@@ -568,13 +659,14 @@ Supabase CLI project in this repo. Every migration must be safe to re-run.
   own `lib/ai/<tool>-schema.ts`, never in the same file as a `./gemini` import
   — see AI Architecture's "Client/server import boundary" for why and how to
   verify it.
-- A new AI-backed tool follows the shape of the existing four (Resume
-  Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter Generator)
-  rather than inventing a new one: a prompt + Zod schema in `lib/ai/`, a Server
-  Action that re-runs `getUser()` and re-validates input server-side, a route
-  that fetches eligibility server-side, and a client phase-machine component.
-  Reach for `requestStructuredJson`, `ResumePicker`, `DashboardPanel` /
-  `ListPanel`, and `ScoreRing` before writing new infrastructure.
+- A new AI-backed tool follows the shape of the existing five (Resume
+  Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter Generator,
+  Career Insights) rather than inventing a new one: a prompt + Zod schema in
+  `lib/ai/`, a Server Action that re-runs `getUser()` and re-validates input
+  server-side, a route that fetches eligibility server-side, and a client
+  phase-machine component. Reach for `requestStructuredJson`, `ResumePicker`,
+  `DashboardPanel` / `ListPanel`, and `ScoreRing` before writing new
+  infrastructure.
 
 **Security**
 
@@ -601,11 +693,8 @@ with `pnpm dlx shadcn@latest add <component>`.
 
 **Shipped and verified end to end** — Landing page, Authentication, Dashboard
 shell, Resume Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter
-Generator. See Current Features for what each does and AI Architecture for how
-the four AI-backed tools are built.
-
-**Planned** — Career Insights, following the same architecture (see
-Development Rules → Architecture).
+Generator, Career Insights. See Current Features for what each does and AI
+Architecture for how the five AI-backed tools are built.
 
 ## Known Limitations
 
@@ -629,25 +718,29 @@ Development Rules → Architecture).
   `createContext is not a function`. Every consumer currently declares the
   boundary itself. Fixing it at the source means editing a generated file.
 - **No rate limiting on any AI route.** A signed-in user can click Analyze,
-  Optimize, "Run a fresh audit", or Generate cover letter repeatedly; each
-  click costs an API call, and Analyze, audit, and cover letter generation each
-  insert a row. Four surfaces now, up from one. The ATS Check's stored-audit
-  path incidentally avoids the cost on re-open, but "Run a fresh audit" is
-  unthrottled, and every cover letter generation is unthrottled by design (see
-  Current Features — there is no stored-result path to short-circuit).
-- **No history/detail UI.** All three pickers read `resume_analyses` back, and
-  the ATS Check reads `ats_audits` back, so the SELECT policies are exercised —
-  but these are selection lists, not a browsing or detail view of past
-  analyses, audits, or letters. An audit is re-viewable only by re-selecting
-  its analysis in the ATS Check; a cover letter is not re-viewable at all once
-  its phase resets, even though `listCoverLetters` (in `cover-letter-action.ts`)
+  Optimize, "Run a fresh audit", Generate cover letter, or Generate again
+  (Career Insights) repeatedly; each click costs an API call, and Analyze,
+  audit, cover letter generation, and career insights generation each insert a
+  row. Five surfaces now, up from one. The ATS Check's and Career Insights'
+  stored-result paths incidentally avoid the cost on re-open, but "Run a fresh
+  audit" and "Generate again" are both unthrottled, and every cover letter
+  generation is unthrottled by design (see Current Features — there is no
+  stored-result path to short-circuit).
+- **No history/detail UI.** All four pickers read `resume_analyses` back, and
+  the ATS Check and Career Insights read `ats_audits`/`career_insights` back,
+  so the SELECT policies are exercised — but these are selection lists, not a
+  browsing or detail view of past analyses, audits, insights, or letters. An
+  audit or an insights document is re-viewable only by re-selecting its
+  analysis in that tool; a cover letter is not re-viewable at all once its
+  phase resets, even though `listCoverLetters` (in `cover-letter-action.ts`)
   already exists to support a future list view — it is simply not wired into
   any UI yet.
-- **The Optimizer, ATS Check, and Cover Letter Generator only see analyses run
-  after `resume_text` shipped.** It is nullable and forward-only (migration
-  `0002`); analyses created before that migration have no stored resume text
-  and are absent from all three pickers, not shown as errors. There is no
-  backfill path — the original text for those rows was never retained.
+- **The Optimizer, ATS Check, Cover Letter Generator, and Career Insights only
+  see analyses run after `resume_text` shipped.** It is nullable and
+  forward-only (migration `0002`); analyses created before that migration have
+  no stored resume text and are absent from all four pickers, not shown as
+  errors. There is no backfill path — the original text for those rows was
+  never retained.
 - **The ATS audit and the ATS score can disagree.** They come from separate
   model calls with different inputs — the audit is never shown the score. This
   is a deliberate improvement on two competing _numbers_, but a resume can still
@@ -663,15 +756,24 @@ Development Rules → Architecture).
   three-layer instruction (source-of-truth framing, generalize-don't-invent,
   a closing self-check) is a mitigation, not a guarantee, exactly like the
   Optimizer's fact-preservation instruction.
+- **Career Insights' score containment and "no invented facts" rules are
+  prompt-level, not structural.** `careerInsightsSchema` has no numeric field,
+  so a score cannot be stored or rendered — but the model could still write a
+  number, a salary figure, or a market statistic into a prose field like
+  `positioning`, or attribute a role fit to a credential the resume doesn't
+  show. The system prompt forbids all of this explicitly (see Current
+  Features); that is a mitigation, not a guarantee, exactly like the audit's
+  no-score rule and the cover letter's/Optimizer's fact-preservation rules.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
 - **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`,
-  `dashboard/resume-optimizer/page.tsx`, `dashboard/ats-checker/page.tsx`, and
-  `dashboard/cover-letter/page.tsx`, but Vercel's Hobby tier caps functions at
-  10s regardless — a slow analysis, optimization, audit, or letter will time
-  out there. Four routes now depend on a timeout that tier does not honor.
+  `dashboard/resume-optimizer/page.tsx`, `dashboard/ats-checker/page.tsx`,
+  `dashboard/cover-letter/page.tsx`, and `dashboard/career-insights/page.tsx`,
+  but Vercel's Hobby tier caps functions at 10s regardless — a slow analysis,
+  optimization, audit, letter, or insights generation will time out there.
+  Five routes now depend on a timeout that tier does not honor.
 - **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
   hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
   `/dashboard/resume-analyzer` lands on Overview after signing in rather than
@@ -707,31 +809,35 @@ Redirect URLs allowlisting the app origin and `/auth/callback`.
 Read this section first in a fresh session.
 
 Nexona is past the scaffolding stage. Authentication, the dashboard shell, and
-four AI-backed tools sharing one AI infrastructure layer are all live and
-verified end to end. The landing page is complete. The next phase is adding
-further tools (Career Insights) on top of a pattern that now has four
-examples, and closing the Known Limitations below — nothing structural is
-missing for a new tool.
+five AI-backed tools sharing one AI infrastructure layer are all live and
+verified end to end. The landing page is complete. There is no planned tool
+left in the sidebar's "Coming Soon" group — the next phase is whatever new tool
+gets specified, on top of a pattern that now has five examples, and closing
+the Known Limitations below.
 
 The most useful thing to understand structurally: **the app shell exists, and
 so does the AI tool pattern.** `/dashboard` is a guarded sidebar layout with
 Overview at its root and each tool on its own route beneath it. Resume
-Analyzer, Resume Optimizer, ATS Compatibility Check, and Cover Letter
-Generator are all shipped; adding the next feature (Career Insights) means
-adding a route under `dashboard/` and flipping its `dashboard-nav-items.ts`
-entry from `comingSoon` to `available` — nothing structural left to invent.
+Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter Generator,
+and Career Insights are all shipped. Shipping the next one means adding a
+route under `dashboard/` and adding its `dashboard-nav-items.ts` entry with
+`status: "available"` from the start — nothing structural left to invent.
 
 The shared surfaces to build on before writing anything new: `lib/ai/gemini.ts`
 (client, model, structured-JSON call), `ResumePicker` (any tool that operates on
 an existing analysis), `DashboardPanel` + `ListPanel` (the card surfaces), and
-`ScoreRing`. A fifth tool should be adding a prompt, a schema, an action, and a
+`ScoreRing`. A sixth tool should be adding a prompt, a schema, an action, and a
 route — not new infrastructure, unless it genuinely needs a new input shape the
 way Cover Letter Generator needed a job-details form (in which case build it
 inline first, the way `CoverLetterJobForm` was, rather than generalizing before
 a second consumer exists). If the new tool's client component needs to import
 any value from its `lib/ai/` module for form validation, put that value in its
 own `<tool>-schema.ts` file first — see AI Architecture's "Client/server import
-boundary."
+boundary." Note that the sidebar's "Coming Soon" `SidebarGroup` in
+`dashboard-sidebar.tsx` is now conditionally rendered (`comingSoonItems.length
+
+> 0`) precisely because shipping Career Insights emptied it; adding a new
+`comingSoon` placeholder before it ships will bring that group back.
 
 One product principle worth not relitigating: **derived tools explain the stored
 analysis, they do not re-derive it.** The ATS Check was specified to expand on

@@ -86,7 +86,9 @@ export const dashboardNavItems: DashboardNavItem[] = [
     id: "career-insights",
     label: "AI Career Insights",
     icon: Compass,
-    status: "comingSoon",
+    status: "available",
+    href: "/dashboard/career-insights",
+    match: "prefix",
   },
 ];
 
