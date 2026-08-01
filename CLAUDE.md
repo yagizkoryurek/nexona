@@ -270,6 +270,8 @@ src/lib/
   ai/cover-letter-schema.ts    Client-safe Zod schema — imports neither
                                ./gemini nor ./cover-letter (see AI Architecture)
   ai/career-insights.ts        Prompt + schemas, requestCareerInsights
+  ai/interview-prep.ts         Prompt + schemas, requestInterviewPrep.
+                               Mid-sprint — no caller wired up yet
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
@@ -538,7 +540,7 @@ runtime import. See `lib/ai/cover-letter-schema.ts` for the reference shape,
 and verify a new one the same way it was verified here: after building,
 `grep -rl "GoogleGenAI" .next/static/` must return nothing.
 
-**Database.** Four tables. `public.resume_analyses` — `id`, `user_id` (FK to
+**Database.** Five tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
 `suggestions` (jsonb), `resume_text` (nullable, forward-only — added by
@@ -617,12 +619,46 @@ Two things about that table are deliberate:
   a job) making two concurrent sets legitimately different and both worth
   keeping. Regeneration appends, and readers take the newest.
 
-`career_insights` is not folded into `ats_audits` with a `kind` discriminator
-despite the identical column shape — which means the `cover_letters` argument
-above (naturally different columns) does not apply here. The reason is
-versioning instead: `schema_version` describes exactly one Zod schema, the two
-documents evolve independently, and in a shared table `schema_version = 2`
-would be ambiguous about which document it versions.
+`public.interview_preps` (migration `0006`) — `id`, `analysis_id` (FK to
+`resume_analyses`, `on delete cascade`), `user_id` (FK to `auth.users`,
+`on delete cascade`), `prep` (jsonb — the whole validated document),
+`schema_version` (smallint, default 1), `created_at`. Indexes on
+`(analysis_id, created_at desc)` and `(user_id, created_at desc)`. RLS
+enabled, INSERT (with the same parent-ownership `exists (…)` clause as the
+other derived tables) and SELECT policies, no UPDATE/DELETE.
+
+Two things about that table are deliberate:
+
+- **No numeric column of any kind**, and no copy of `overall_score` or
+  `ats_score`. This goes further than `career_insights`, which is at least
+  shown both scores as fenced context: Interview Prep is **not shown them at
+  all**. They measure document quality, which says nothing about what a hiring
+  manager would ask, and a real interviewer has no access to them either.
+  `interviewPrepSchema` has no numeric field, so nothing scorelike can reach
+  the column.
+- **No unique constraint on `analysis_id`** — follows `ats_audits` and
+  `career_insights`. The likely questions for a fixed resume converge on one
+  answer; there is no second axis (the way a letter is keyed to a job) making
+  two concurrent sets legitimately different. Regeneration appends and readers
+  take the newest; "Generate again" exists to give fresh practice material on
+  demand rather than to keep a library.
+
+**The derived-document table shape.** `ats_audits`, `career_insights`, and
+`interview_preps` share an identical column shape — `analysis_id`, `user_id`,
+one jsonb document, `schema_version`, `created_at`, two indexes, and the same
+three RLS policies. That is a deliberate convention, and it is **not**
+duplication waiting to be collapsed into one table with a `kind`
+discriminator. The reason is versioning: `schema_version` describes exactly
+one Zod schema, and these documents evolve independently. In a shared table
+`schema_version = 2` would be ambiguous about which document it versions, and
+that ambiguity worsens with each kind added rather than improving. A fourth
+derived document should copy migration `0006` rather than merge into it.
+
+Note this is a different argument from the one that keeps `cover_letters`
+separate. That table is separate because a letter's two real inputs and one
+output are naturally their own columns, so a shared table would leave half its
+columns null. Among the three above the shape genuinely is identical, so
+versioning is the whole reason.
 
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.

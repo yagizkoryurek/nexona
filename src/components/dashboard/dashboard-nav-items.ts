@@ -2,6 +2,7 @@ import {
   Compass,
   FileText,
   LayoutDashboard,
+  MessagesSquare,
   ScanSearch,
   ShieldCheck,
   Wand2,
@@ -88,6 +89,14 @@ export const dashboardNavItems: DashboardNavItem[] = [
     icon: Compass,
     status: "available",
     href: "/dashboard/career-insights",
+    match: "prefix",
+  },
+  {
+    id: "interview-prep",
+    label: "Interview Prep",
+    icon: MessagesSquare,
+    status: "available",
+    href: "/dashboard/interview-prep",
     match: "prefix",
   },
 ];
