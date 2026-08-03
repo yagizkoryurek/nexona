@@ -16,9 +16,9 @@ export const footerContent = {
  * footer and the navbar can never drift apart — adding a section to the nav
  * adds it here too.
  *
- * NOTE: every Company and Legal destination is a route that does not exist
- * yet, alongside the existing `/sign-in` and `/get-started`. They will 404
- * until those pages are built.
+ * NOTE: the Legal destinations (`/privacy`, `/terms`) are real placeholder
+ * pages under `src/app/(legal)/`. The Company destinations (`/about`,
+ * `/contact`) do not exist yet and will 404 until those pages are built.
  */
 export const footerLinkGroups: FooterLinkGroup[] = [
   {
