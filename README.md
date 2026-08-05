@@ -1,78 +1,134 @@
 # Nexona
 
-AI-powered résumé analysis that tells you why you aren't getting interviews.
+**AI-powered résumé analysis and application toolkit.**
 
-Nexona reads a résumé the way a recruiter and an applicant tracking system would, then hands back a specific, prioritised list of what to fix — structure, ATS compatibility, wording, and overall quality — in about forty seconds.
+Nexona reads a résumé the way a recruiter and an applicant tracking system
+would, then turns that read into specific, actionable work: a scored analysis,
+a rewritten résumé, a deep ATS audit, a targeted cover letter, career
+direction, and the interview the résumé invites. Every tool builds on one
+stored analysis rather than re-deriving it, so the advice stays consistent
+across the whole toolkit.
 
-> **Status:** in development. The landing page, authentication, and the Resume Analyzer are working. See [Project status](#project-status).
+Built for students, recent graduates, working professionals, and career
+changers — anyone applying and not hearing back.
 
-## Key features
+**Built with** Next.js 15 · React 19 · TypeScript · Tailwind CSS v4 · Supabase
+· Google Gemini
 
-**Available now**
+> **Status:** the core toolkit is complete and running locally. Development is
+> ongoing — see [Roadmap](#roadmap). Not yet deployed.
 
-- **Resume Analyzer** — a structured read of an existing résumé (PDF or DOCX), returning an overall quality score, an ATS compatibility score, a summary, and specific strengths, weaknesses, and improvement suggestions.
-- **Accounts** — email/password sign-up with confirmation, sign-in, and password reset.
+---
 
-**Planned**
+## Features
 
-- **Dashboard** — a proper app shell with sidebar navigation across tools.
-- **Resume Optimizer** — rewrite suggestions applied to the résumé itself.
-- **ATS Checker** — a deeper, dedicated compatibility pass.
-- **Cover Letter Generator** — a matching cover letter drawn from the résumé.
-- **Career Insights** — guidance drawn from analysis history.
+Six AI-backed tools, all shipped and working.
 
-Nexona is aimed at students, graduates, professionals, career changers, and anyone trying to improve their job applications.
+| Feature                     | What it does                                                                                                                                   |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resume Analyzer**         | Upload a PDF or DOCX. Returns an overall score, an ATS score, a summary, and specific strengths, weaknesses, and suggestions.                  |
+| **Resume Optimizer**        | Rewrites a previously analyzed résumé for wording and structure while preserving every factual detail — employers, titles, dates, credentials. |
+| **ATS Compatibility Check** | A qualitative audit: formatting, section structure, keywords, and readability, plus present/missing keywords, parsing blockers, and fixes.     |
+| **Cover Letter Generator**  | Takes a job title, optional company, and job description, and writes a letter grounded entirely in the résumé's own content.                   |
+| **Career Insights**         | Assesses professional position: strength themes with evidence, roles the résumé already supports, skill gaps, and prioritized next steps.      |
+| **Interview Preparation**   | The interview the résumé implies — 6–12 likely questions with the résumé content prompting each, answer guidance, talking points, and drills.  |
 
-## Project status
+Supporting the tools: Supabase email/password **authentication** with
+confirmation and password reset, a guarded **dashboard shell** with persistent
+sidebar navigation, and public **legal pages** (`/terms`, `/privacy` —
+placeholder content pending legal review).
 
-| Area                     | Status  |
-| ------------------------ | ------- |
-| Landing page             | Done    |
-| Authentication           | Done    |
-| Résumé upload (PDF/DOCX) | Done    |
-| AI analysis + scoring    | Done    |
-| Analysis persistence     | Done    |
-| Dashboard + navigation   | Planned |
-| Optimizer / Cover Letter | Planned |
+**Two design rules run through every AI tool.** Derived tools _explain_ the
+stored analysis rather than re-deriving it, so no tool emits a second score
+that could contradict the first. And every claim must trace back to the
+résumé — the prompts forbid inventing an employer, title, credential, or
+achievement that isn't already there.
 
-Engineering detail — architecture, conventions, and known limitations — lives in [CLAUDE.md](CLAUDE.md).
+---
 
-## Tech stack
+## Screenshots
 
-- **Framework** — [Next.js 15](https://nextjs.org) (App Router), React 19
-- **Language** — TypeScript
-- **Styling** — Tailwind CSS v4
-- **Components** — [shadcn/ui](https://ui.shadcn.com) on Radix UI primitives, Lucide icons
-- **Auth & database** — [Supabase](https://supabase.com) (`@supabase/ssr`)
-- **AI** — [Google Gemini](https://ai.google.dev) (`@google/genai`)
-- **Document parsing** — `unpdf` (PDF), `mammoth` (DOCX)
-- **Forms** — react-hook-form + Zod
-- **Tooling** — ESLint 9 (flat config), Prettier 3
-- **Package manager** — pnpm
+Not yet captured. Placeholders are listed here so they can be dropped in
+without restructuring the README.
 
-## Getting started
+| View                    | Status  |
+| ----------------------- | ------- |
+| Landing Page            | Pending |
+| Dashboard               | Pending |
+| Resume Analyzer         | Pending |
+| ATS Compatibility Check | Pending |
+| Cover Letter Generator  | Pending |
+| Career Insights         | Pending |
+| Interview Preparation   | Pending |
 
-**Prerequisites:** Node.js 20+ and pnpm 9+.
+<!--
+Add images to docs/screenshots/ and replace the table above, e.g.:
+![Resume Analyzer](docs/screenshots/resume-analyzer.png)
+-->
+
+---
+
+## Tech Stack
+
+| Area            | Choice                                                             |
+| --------------- | ------------------------------------------------------------------ |
+| Framework       | [Next.js 15](https://nextjs.org) (App Router), React 19            |
+| Language        | TypeScript (strict)                                                |
+| Styling         | Tailwind CSS v4                                                    |
+| Components      | [shadcn/ui](https://ui.shadcn.com) on Radix UI, Lucide icons       |
+| Auth & database | [Supabase](https://supabase.com) (`@supabase/ssr`, Postgres + RLS) |
+| AI              | [Google Gemini](https://ai.google.dev) (`@google/genai`)           |
+| Document text   | `unpdf` (PDF), `mammoth` (DOCX)                                    |
+| Forms           | react-hook-form + Zod                                              |
+| Tooling         | ESLint 9 (flat config), Prettier 3                                 |
+| Package manager | pnpm                                                               |
+
+---
+
+## Getting Started
+
+**Prerequisites:** Node.js 20+ and pnpm 9+ (developed on pnpm 11.17).
 
 ```bash
 git clone https://github.com/yagizkoryurek/nexona.git
 cd nexona
 pnpm install
-cp .env.example .env.local   # then fill in the three values
+cp .env.example .env.local
 pnpm dev
 ```
 
 The app runs at [http://localhost:3000](http://localhost:3000).
 
-**Environment variables** are required — see `.env.example`. You will need a
-Supabase project (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
-and a Google AI Studio key (`GEMINI_API_KEY`).
+### Environment variables
 
-**Database setup:** run `supabase/migrations/0001_resume_analyses.sql` once in
-the Supabase SQL Editor. See [CLAUDE.md](CLAUDE.md) for the required Supabase
-project settings.
+All three are required. See `.env.example`.
 
-## Available scripts
+| Variable                        | Scope      | Source                                                 |
+| ------------------------------- | ---------- | ------------------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Public     | Supabase → Project Settings → API                      |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public     | Supabase → Project Settings → API                      |
+| `GEMINI_API_KEY`                | **Server** | [Google AI Studio](https://aistudio.google.com/apikey) |
+
+The two Supabase values are safe in the browser — the anon key is designed to
+be public, and Row Level Security protects the data. `GEMINI_API_KEY` must
+never be given a `NEXT_PUBLIC_` prefix.
+
+### Database setup
+
+Run every file in `supabase/migrations/` **in order** in the Supabase SQL
+Editor. There is no Supabase CLI project in this repo, so migrations are
+applied by hand; each one is written to be safe to re-run.
+
+```
+0001_resume_analyses.sql   0004_cover_letters.sql
+0002_add_resume_text.sql   0005_career_insights.sql
+0003_ats_audits.sql        0006_interview_preps.sql
+```
+
+Required Supabase project settings (email confirmations, password length,
+redirect URLs) are documented in [CLAUDE.md](CLAUDE.md).
+
+### Scripts
 
 | Script              | Description                       |
 | ------------------- | --------------------------------- |
@@ -84,32 +140,68 @@ project settings.
 | `pnpm format`       | Format all files with Prettier    |
 | `pnpm format:check` | Verify formatting without writing |
 
-To add a shadcn/ui component:
+---
 
-```bash
-pnpm dlx shadcn@latest add <component>
+## Project Structure
+
 ```
+src/
+  app/              Routes only — landing, (auth), (legal), dashboard
+  components/       Shared UI; ui/ holds shadcn-generated primitives
+  lib/
+    ai/             One module per AI tool + a shared Gemini client
+    supabase/       Browser, server, and middleware clients
+  hooks/  types/
+supabase/migrations/  SQL, applied manually
+```
+
+Each AI tool follows the same shape: a prompt and Zod schema in `lib/ai/`, a
+Server Action that re-authenticates and re-validates its input, a route that
+loads eligibility server-side, and a client component owning the phase
+machine. See [CLAUDE.md](CLAUDE.md) for the full layout and the reasoning
+behind it.
+
+---
 
 ## Roadmap
 
-### MVP
+Genuinely open work, roughly in priority order.
 
-- [x] Landing page
-- [x] Authentication
-- [x] Résumé upload (PDF, DOCX)
-- [x] Résumé analysis and ATS scoring
-- [x] AI feedback
-- [ ] User dashboard with sidebar navigation
+- [ ] **Register the middleware** — it lives at the repo root but the app is
+      under `src/`, so Next.js never loads it. The dashboard's layout guard
+      still protects every route, but the documented second layer is inert.
+- [ ] **Automated tests** — there is no test suite of any kind yet.
+- [ ] **Rate limiting** on the six AI endpoints; every generation currently
+      costs an uncapped API call.
+- [ ] **Deploy** to Vercel, and confirm function timeouts on the target plan.
+- [ ] **History and detail views** — past analyses, audits, letters, insights,
+      and preparation sets are only reachable by re-selecting a résumé.
+- [ ] **`.doc` support**, or narrow the file picker to the formats that work.
+- [ ] **Align the palette** with the design system.
+- [ ] **Company pages** (`/about`, `/contact`), currently 404.
+- [ ] **Replace the placeholder legal copy** with reviewed documents.
 
-### Beyond MVP
+A fuller list of known limitations, with the reasoning behind each, is in
+[CLAUDE.md](CLAUDE.md).
 
-- [ ] Resume Optimizer
-- [ ] ATS Checker
-- [ ] Cover Letter Generator
-- [ ] Career Insights
+---
+
+## Documentation
+
+[**CLAUDE.md**](CLAUDE.md) is the single source of truth for this codebase and
+covers:
+
+- **Architecture** — app shell, routing, and component layout
+- **AI pipeline** — the shared Gemini layer and all six tool pipelines
+- **Database** — every table, its RLS policies, and why each is shaped that way
+- **Development rules** — conventions, security requirements, review workflow
+- **Known limitations** — what is unfinished or fragile, and why
+
+---
 
 ## License
 
 Proprietary. All rights reserved.
 
-This repository is not open-source licensed. No permission is granted to use, copy, modify, or distribute this software.
+This repository is not open-source licensed. No permission is granted to use,
+copy, modify, or distribute this software.
