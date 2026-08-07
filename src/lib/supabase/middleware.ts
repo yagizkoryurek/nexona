@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-import { DEFAULT_AUTHENTICATED_PATH } from "@/lib/auth-redirect";
+import {
+  DEFAULT_AUTHENTICATED_PATH,
+  safeRedirectPath,
+} from "@/lib/auth-redirect";
 
 /** Requires a session. Everything nested underneath is covered too. */
 const PROTECTED_PREFIXES = [DEFAULT_AUTHENTICATED_PATH];
@@ -83,10 +86,33 @@ export async function updateSession(request: NextRequest) {
   }
 
   if (user && AUTH_ONLY_PATHS.includes(pathname)) {
-    return redirectTo(request, supabaseResponse, DEFAULT_AUTHENTICATED_PATH);
+    return redirectTo(request, supabaseResponse, signedInDestination(request));
   }
 
   return supabaseResponse;
+}
+
+/**
+ * Where to send a signed-in user who lands on an auth-only page.
+ *
+ * Honours the `next` the link was carrying, so someone who follows a deep link
+ * while already signed in reaches the page they asked for instead of being
+ * dumped on Overview. `safeRedirectPath` is the same guard the sign-in action
+ * uses — it rejects cross-origin and protocol-relative values and falls back
+ * to the dashboard — so this cannot become an open redirect.
+ *
+ * A `next` that points back at an auth-only page is rejected as well.
+ * `/sign-in?next=/sign-in` would otherwise redirect to a page that redirects
+ * again; each hop strips a level of nesting so it always terminates, but
+ * routing someone through the sign-in page to reach the sign-in page is never
+ * what they meant. Comparing on `pathname` keeps that true when the value
+ * carries its own query string or fragment.
+ */
+function signedInDestination(request: NextRequest) {
+  const next = safeRedirectPath(request.nextUrl.searchParams.get("next"));
+  const { pathname } = new URL(next, request.url);
+
+  return AUTH_ONLY_PATHS.includes(pathname) ? DEFAULT_AUTHENTICATED_PATH : next;
 }
 
 /**
