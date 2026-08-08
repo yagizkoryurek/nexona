@@ -217,13 +217,25 @@ Exactly as it behaves today.
 **Routes.** `/` (public landing) · `/sign-in` · `/get-started` (sign up) ·
 `/forgot-password` · `/reset-password` · `/auth/callback` · `/dashboard`.
 
-**Middleware** (`middleware.ts` → `src/lib/supabase/middleware.ts`) is written
-to run on every non-static request, but **is not currently registered with
-Next.js and therefore never executes** — see Known Limitations. Everything in
-this subsection describes intended behaviour that is presently inert; the only
-live guard is the `getUser()` check in `dashboard/layout.tsx`. It calls
-`supabase.auth.getUser()` — which revalidates the token against the Auth server
-and writes rotated cookies onto the response — then applies two rules:
+**Middleware** (`src/middleware.ts` → `src/lib/supabase/middleware.ts`) is
+registered and executes. It runs on a **deliberately narrow matcher** rather
+than on every non-static request:
+
+```
+/dashboard/:path*  ·  /sign-in  ·  /get-started  ·  /forgot-password  ·  /reset-password
+```
+
+`/`, `/terms` and `/privacy` are excluded because they are statically
+prerendered and render nothing user-specific — an authenticated visitor to `/`
+sees the same landing page as anyone else, so the session is never consulted
+there, and paying for a `getUser()` round-trip on the highest-traffic public
+route buys nothing. `/auth/callback` is excluded because it performs its own
+PKCE code exchange with its own Supabase client; a `getUser()` ahead of that
+exchange does no useful work on a request that has no session yet.
+
+On every matched request it calls `supabase.auth.getUser()` — which revalidates
+the token against the Auth server and writes rotated cookies onto the response
+— then applies two rules:
 
 - `PROTECTED_PREFIXES = ["/dashboard"]` — no session → redirect to
   `/sign-in?next=<path>`.
@@ -234,9 +246,21 @@ and writes rotated cookies onto the response — then applies two rules:
 page regardless of session state. An authenticated user visiting `/` sees the
 landing page, not a redirect. This was tried and explicitly reverted.
 
-`/reset-password` is deliberately **not** in `AUTH_ONLY_PATHS`: a user arriving
-from a recovery email _is_ signed in, so listing it would make the reset flow
-impossible to complete. That page guards itself instead.
+`/reset-password` **is** matched by the matcher but is deliberately **not** in
+`AUTH_ONLY_PATHS`: a user arriving from a recovery email _is_ signed in, so
+listing it would make the reset flow impossible to complete. It stays matched so
+the recovery session's cookies keep rotating while the user types a new
+password. That page guards itself instead — it calls `getUser()` and redirects
+to `/forgot-password` when there is no session.
+
+**A signed-in user landing on an auth-only page keeps their destination.**
+`signedInDestination` (`src/lib/supabase/middleware.ts`) reads the `next` the
+link was carrying and sends them there rather than always to Overview, so a deep
+link followed while already signed in still arrives where it pointed. It runs
+`next` through the same `safeRedirectPath` guard the sign-in action uses, so it
+cannot become an open redirect, and a `next` pointing back at an auth-only page
+falls back to `/dashboard` — routing someone through the sign-in page to reach
+the sign-in page is never what they meant.
 
 **Flows.**
 
@@ -257,19 +281,21 @@ impossible to complete. That page guards itself instead.
 deliberately identical for unknown-email and wrong-password to prevent user
 enumeration. `safeRedirectPath` (`src/lib/auth-redirect.ts`) rejects
 cross-origin and protocol-relative `next` values. Server Actions carry Next's
-built-in Origin-header CSRF check. `/dashboard` was designed to be guarded
-twice — middleware plus a `getUser()` check in `dashboard/layout.tsx` — but
-with the middleware inert, **the layout check is the only thing protecting it**.
-It does hold: every `/dashboard/*` route renders through that layout, and
-signed-out requests redirect. The redundancy, not the protection, is what is
-currently missing.
+built-in Origin-header CSRF check. `/dashboard` is guarded **twice** — the
+middleware plus a `getUser()` check in `dashboard/layout.tsx` — and both layers
+are live. The middleware answers first, so a signed-out deep link is redirected
+before the layout renders; the layout check remains as the backstop that holds
+even if a route ever falls outside the matcher.
 
 ## Project Structure
 
 ```
-middleware.ts                  Thin call site → lib/supabase/middleware.
-                               NOT currently registered — see Known Limitations
 supabase/migrations/           SQL, applied manually via Supabase SQL Editor
+
+src/middleware.ts              Thin call site → lib/supabase/middleware, plus
+                               the matcher. MUST live under src/ — this project
+                               keeps its app there, so a root middleware.ts is
+                               never registered (see Authentication Flow)
 
 src/app/
   page.tsx                     Public landing page
@@ -835,6 +861,39 @@ Supabase CLI project in this repo. Every migration must be safe to re-run.
   case (see its pipeline, step 3): prompt-level fencing is a mitigation, an
   unfetched column is a guarantee.
 
+**Local Development**
+
+Four operational rules, each learned by losing time to it.
+
+- **Always browse `http://localhost:3000`. Never the `Network:` LAN URL** that
+  `next dev` also prints. Auth actions build their emailed links from the
+  request's `Origin`, so browsing at `http://192.168.x.x:3000` asks Supabase to
+  redirect back to an origin that is not on the Redirect URLs allowlist.
+  Supabase then **silently discards `redirect_to` and falls back to the Site
+  URL** — the emailed link lands on `/` and `/auth/callback` is never reached.
+  `127.0.0.1:3000` is allowlisted too; the LAN IP is not. See Environment
+  Variables for the allowlist contract.
+- **Run exactly one `next dev` at a time.** Concurrent dev servers are a real
+  hazard: they share one `.next` directory, and the second to start takes a port
+  like 3001 while both write to the same build output. That can leave stale or
+  conflicting artifacts. The failures observed here were a 404 on
+  `/_next/static/css/app/layout.css` with an empty `.next/static/css/`, an
+  `InvariantError: Expected clientReferenceManifest to be defined`, and a
+  `500` on `/`. Check with `pgrep -f "next dev"` before starting one.
+- **Never run `pnpm build` while `next dev` is running**, and vice versa. Same
+  shared `.next`, same hazard. Stop the dev server, build, then restart it.
+- **`.next` is disposable.** It is gitignored (`.gitignore:17`) with zero
+  tracked files, so `rm -rf .next` is the reliable reset when the build output
+  is suspect, and it touches no source and no git state.
+
+A symptom worth recognising, because it looks like an application bug and is
+not: when `.next` is in a bad state the client bundle fails to hydrate, React
+never takes over the forms, and a submit becomes a **native browser GET**. The
+dev log then shows `GET /forgot-password?email=…` instead of
+`POST /forgot-password`, which means the Server Action never ran at all — no
+email was sent, nothing reached Supabase. `POST` vs `GET` on a form route is
+therefore a fast hydration check.
+
 **Security**
 
 - Use `getUser()`, never `getSession()`, for any decision about who may see or
@@ -871,19 +930,18 @@ state — has been performed manually by the maintainer, and is the one step no
 automated harness in this repo covers. There is no test suite; see Known
 Limitations.
 
+**The authentication layer additionally has its own verification record**, from
+the sprint that activated the middleware: the compiled-matcher proof (12/12),
+the PKCE HTTP matrix (13/13), the authenticated route matrix (21/21), and
+tool-route content assertions behind live middleware (6/6). Both browser-bound
+PKCE flows — sign-up confirmation and password recovery — were completed
+manually end to end and corroborated server-side, recovery from the dev log's
+request sequence and sign-up from the `auth.users` timing (`created_at` →
+`confirmation_sent_at` → `email_confirmed_at` → `last_sign_in_at`). See
+Important Notes for the routine that produced these.
+
 ## Known Limitations
 
-- **The middleware never runs.** `middleware.ts` sits at the repo root, but this
-  project keeps its app under `src/`, so Next.js looks for `src/middleware.ts`
-  and finds nothing. Confirmed empirically, not inferred: `next build` writes
-  `"middleware": {}` / `"sortedMiddleware": []` into
-  `.next/server/middleware-manifest.json`, and no middleware compile step
-  appears in `next dev`. Consequences — the second layer of `/dashboard`
-  protection is absent (the layout guard still holds), `AUTH_ONLY_PATHS` never
-  fires so a signed-in user can still open `/sign-in`, and cookie rotation via
-  `getUser()` only happens on routes that call it themselves. Found while
-  verifying the dashboard shell; **not yet fixed** — moving the file activates
-  behaviour that has never actually executed, which deserves its own task.
 - **`.doc` is not supported.** The picker accepts `.pdf,.doc,.docx` and
   `validateResumeFile` passes `.doc` through, but extraction rejects it with a
   clear message — no reliable pure-JS extractor exists for the legacy binary
@@ -970,26 +1028,34 @@ Limitations.
   at 10s regardless — a slow analysis, optimization, audit, letter, insights,
   or interview-prep generation will time out there. Six routes now depend on a
   timeout that tier does not honor.
-- **Deep links lose their destination.** `dashboard/layout.tsx` redirects to a
-  hardcoded `/sign-in?next=/dashboard`, so a signed-out user opening
-  `/dashboard/resume-analyzer` lands on Overview after signing in rather than
-  the analyzer. A Server Component cannot read the pathname; the middleware is
-  what encodes the real one, and it is inert.
-- **PKCE links are browser-bound.** Confirmation and recovery links must be
-  opened in the same browser that started the flow, or the code exchange fails
-  and the user lands on `/sign-in?notice=link-invalid`.
-- **`middleware.ts` does not reliably hot-reload** in `next dev`. After editing
-  it, restart the dev server before concluding a change didn't work.
+- **PKCE links are browser-bound, and origin-bound.** Confirmation and recovery
+  links must be opened in the same browser that started the flow, or the code
+  exchange fails and the user lands on `/sign-in?notice=link-invalid`. The
+  reason is that the PKCE **code verifier is stored in a cookie scoped to the
+  origin that began the flow**, so the callback must be reached on that same
+  origin — which is a second, independent reason never to start a flow on the
+  LAN URL (see Development Rules → Local Development). `dashboard/layout.tsx`
+  still redirects to a hardcoded `/sign-in?next=/dashboard`, but the middleware
+  answers first and encodes the real path, so deep links keep their destination
+  in practice.
+- **Supabase's transactional email is rate limited, and the sign-up form hides
+  it.** The built-in email service allows only a couple of sends per hour on a
+  free project. Once exhausted, `/signup` and `/recover` return `429` with
+  `error_code: over_email_send_rate_limit`, and no user row is created for a
+  rejected sign-up. `signUp` maps every error other than `user_already_exists`
+  to "Something went wrong. Please try again." — so a throttled user is told to
+  retry, which consumes further attempts. Handling that code with an honest
+  message is a worthwhile fix; configuring custom SMTP removes the limit.
+  Testing several auth flows in one sitting will hit this.
+- **`src/middleware.ts` does not reliably hot-reload** in `next dev`. After
+  editing it, restart the dev server before concluding a change didn't work.
 
 ## Environment Variables
 
 Copy `.env.example` to `.env.local`. All three are required. The two Supabase
-values are read by every route that touches auth or data — which is the whole
-dashboard, every Server Action, and the auth screens — so the app is unusable
-without them. (An earlier version of this line blamed the middleware for
-that; the middleware never executes, so it is the routes' own
-`createClient()` calls that need these.) `GEMINI_API_KEY` is needed by every
-AI tool.
+values are read by the middleware and by every route that touches auth or data —
+which is the whole dashboard, every Server Action, and the auth screens — so the
+app is unusable without them. `GEMINI_API_KEY` is needed by every AI tool.
 
 | Variable                        | Scope      | Source                                        |
 | ------------------------------- | ---------- | --------------------------------------------- |
@@ -1004,6 +1070,28 @@ be public and RLS protects the data. `GEMINI_API_KEY` must never get a
 **Supabase project settings** that the code assumes: email confirmations
 enabled; password minimum length 8 (matching the Zod schema); Site URL and
 Redirect URLs allowlisting the app origin and `/auth/callback`.
+
+**The allowlist contract, because getting it wrong fails silently.** `signUp`
+and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo` from the
+request's own `Origin` (the `origin()` helper in `auth-actions.ts`), which is
+correct for production — the deployed origin must be used, so hardcoding one
+would break Vercel. Supabase then checks that URL against **Redirect URLs**, and
+if it does not match it **discards the value and substitutes the Site URL**, with
+no error to the caller. The emailed link therefore appears to work but delivers
+the user to the Site URL's root instead of `/auth/callback`, and the flow dies
+with no server-side trace, because the app is never reached.
+
+Currently allowlisted for local work: `http://localhost:3000` and
+`http://127.0.0.1:3000`. The machine's LAN address is **not**, which is why
+Local Development requires `localhost`. Adding `http://192.168.x.x:3000/**`
+would enable LAN testing (from a phone, say) but is brittle — DHCP reassigns
+that address.
+
+Resolution can be checked without waiting for an email: request
+`/auth/v1/verify?token=<anything>&type=recovery&redirect_to=<candidate>` against
+the project and read the `Location` header. Supabase resolves `redirect_to`
+before it validates the token, so an allowlisted URL is echoed back while a
+rejected one is replaced by the Site URL.
 
 ## Important Notes for Future Development
 
@@ -1074,11 +1162,67 @@ real problems, in order:
 The signed-in click-through is manual. Everything above is scriptable and
 should be scripted.
 
+**How the authentication layer gets verified**, which is a different routine
+because the failure modes are routing and cookies rather than model output:
+
+1. **Prove the matcher against the compiled manifest, not the source config.**
+   Read `.next/server/middleware-manifest.json` after `next build` and run its
+   `matchers[].regexp` against candidate paths. This is what catches an
+   unregistered middleware — `sortedMiddleware: []` means it never runs. It
+   **requires a production build**: `next dev` writes an empty middleware
+   manifest, so the same check against a dev build proves nothing. Always assert
+   positive controls alongside the exclusions; a matcher that matched nothing
+   would otherwise pass every "must be excluded" case.
+2. **Drive the HTTP matrix with a real cookie jar.** Sign in through
+   `createServerClient` with an in-memory `Map` for cookies, then replay them on
+   `fetch`. Letting `@supabase/ssr` produce the cookies tests the actual chunked
+   format the middleware parses, rather than a hand-rolled guess at it. Assert on
+   status **and** `Location`, since a wrong-but-present redirect is the likely
+   bug.
+3. **Distinguish middleware from the layout guard.** Some results only the
+   middleware can produce: an authenticated `GET /sign-in` returning `307` (the
+   layout never runs there), and a signed-out `GET /dashboard/<tool>` whose
+   `next` carries the real nested path (the layout hardcodes `/dashboard`).
+   Those two are the proof it is genuinely executing.
+4. **Probe `redirect_to` resolution without an inbox** — see Environment
+   Variables. Cheap, repeatable, and the only way to test the allowlist without
+   spending a rate-limited email.
+5. **Read the dev log for `POST` vs `GET` on form routes.** A `GET` with the
+   field in the query string means hydration failed and the Server Action never
+   ran, so nothing reached Supabase. Without this check a broken build looks
+   exactly like a broken feature.
+6. **Confirm manual PKCE flows server-side rather than trusting the browser.**
+   Recovery leaves a legible sequence in the dev log
+   (`POST /forgot-password` → `GET /auth/callback?code=…&next=%2Freset-password`
+   → `GET /reset-password 200` → `POST /reset-password 303` →
+   `GET /sign-in?notice=reset-success`). Sign-up confirmation is legible in
+   `auth.users` timing: `created_at` → `confirmation_sent_at` →
+   `email_confirmed_at` → `last_sign_in_at`.
+
+Reserve the emails. Both browser-bound flows cost a send, and the rate limit is
+low enough that a few iterations exhaust it — so get the scriptable checks green
+first, then spend an email once.
+
 One environment quirk worth knowing: this repo lives under a synced folder, and
-the sync client periodically leaves duplicate `* 2.*` files inside `.next/`.
-TypeScript picks them up from `.next/types` and reports `Duplicate identifier`
-errors that point at no real source file. `find .next -name "* 2.*" -delete`
-clears it.
+the sync client periodically leaves duplicates inside `.next/`. TypeScript picks
+them up from `.next/types` and reports `Duplicate identifier` errors that point
+at no real source file.
+
+The duplicates come in two shapes, and an earlier version of this note only
+covered one. Files appear as `* 2.*` (`route 2.js`), but **whole directories
+appear too, with no dot at all** — `cache 2`, `static 2`, `server 2`, `types 2`,
+`chunks 3` have all been observed, and the suffix is not always ` 2`. So
+`find .next -name "* 2.*" -delete` matches the files and silently misses every
+directory. Use a pattern that covers both:
+
+```
+find .next \( -name "* [0-9]" -o -name "* [0-9].*" \) -exec rm -rf {} +
+```
+
+They regenerate quickly — copies reappeared within a minute of a fresh build —
+so treat this as recurring housekeeping, not a one-time fix. When the build
+output is broadly suspect, `rm -rf .next` is more reliable than pruning
+duplicates (see Development Rules → Local Development).
 
 One product principle worth not relitigating: **derived tools explain the stored
 analysis, they do not re-derive it.** The ATS Check was specified to expand on
@@ -1087,10 +1231,14 @@ legitimately disagree and two numbers for one resume is a broken experience. Any
 future tool that is tempted to emit a competing score should carry the same
 constraint.
 
-Before building anything new, read the **first** Known Limitation. The
-middleware has never executed, which means the documented auth model and the
-running one differ. That is the highest-value thing to fix in this codebase and
-it is deliberately left open rather than folded into an unrelated task.
+The middleware is now live, and the documented auth model matches the running
+one — that gap is closed, and both Known Limitations describing it have been
+retired. Two things about it are worth not undoing by accident: the file **must**
+stay at `src/middleware.ts` (a root `middleware.ts` is never registered in a
+`src/`-based project, which is how it sat inert for several sprints), and the
+matcher is **deliberately narrow** rather than a catch-all, because every matched
+request costs a `getUser()` round-trip. Widening it to `/` would buy nothing and
+add latency to the highest-traffic public route.
 
 Two conventions carry real weight here. First, this project is worked
 **sprint-by-sprint with a review gate** — implement the current task, stop,
