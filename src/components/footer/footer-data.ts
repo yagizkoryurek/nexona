@@ -18,7 +18,7 @@ export const footerContent = {
  *
  * NOTE: the Legal destinations (`/privacy`, `/terms`) are real placeholder
  * pages under `src/app/(legal)/`. The Company destinations (`/about`,
- * `/contact`) do not exist yet and will 404 until those pages are built.
+ * `/contact`) are real pages under `src/app/(company)/`.
  */
 export const footerLinkGroups: FooterLinkGroup[] = [
   {

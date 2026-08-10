@@ -25,7 +25,7 @@ export function PricingCard({
   billingPeriod,
   className,
 }: PricingCardProps) {
-  const price = plan.price[billingPeriod];
+  const price = plan.price?.[billingPeriod];
   const featured = plan.featured ?? false;
 
   return (
@@ -67,43 +67,72 @@ export function PricingCard({
         {/*
           Announced on change so switching the billing toggle is perceivable
           without sight. Only the plans whose price actually changes speak.
+
+          A `comingSoon` plan carries no `price` at all — inventing a "₺—" or a
+          struck-through figure would be the same false claim in another font.
         */}
-        <p aria-live="polite" className="mt-4 flex items-baseline gap-2">
-          <span className="text-foreground text-4xl font-semibold tracking-tight tabular-nums">
-            {price.amount}
-          </span>
-          <span className="text-muted-foreground text-sm">{price.period}</span>
-        </p>
+        {price ? (
+          <p aria-live="polite" className="mt-4 flex items-baseline gap-2">
+            <span className="text-foreground text-4xl font-semibold tracking-tight tabular-nums">
+              {price.amount}
+            </span>
+            <span className="text-muted-foreground text-sm">
+              {price.period}
+            </span>
+          </p>
+        ) : null}
 
         {plan.trial ? (
           <p className="text-muted-foreground mt-2 text-sm">{plan.trial}</p>
         ) : null}
 
-        <ul
-          aria-label={`${plan.name} plan includes`}
-          className="mt-8 flex flex-1 flex-col gap-3"
-        >
-          {plan.features.map((feature) => (
-            <li key={feature} className="flex items-start gap-2.5 text-sm">
-              <Check
-                aria-hidden="true"
-                className="text-foreground mt-0.5 size-4 shrink-0"
-              />
-              <span className="text-muted-foreground leading-relaxed">
-                {feature}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {plan.summary ? (
+          <p className="text-muted-foreground mt-4 text-sm leading-relaxed text-pretty">
+            {plan.summary}
+          </p>
+        ) : null}
 
-        <Button
-          asChild
-          size="lg"
-          variant={featured ? "default" : "outline"}
-          className="mt-8 h-11 w-full px-6"
-        >
-          <Link href={plan.cta.href}>{plan.cta.label}</Link>
-        </Button>
+        {/*
+          The feature list carries `flex-1`, which is what pushes each card's CTA
+          to a shared baseline. A plan with no features still needs that spacer,
+          or its card collapses to its content height beside a taller sibling.
+        */}
+        {plan.features.length > 0 ? (
+          <ul
+            aria-label={`${plan.name} plan includes`}
+            className="mt-8 flex flex-1 flex-col gap-3"
+          >
+            {plan.features.map((feature) => (
+              <li key={feature} className="flex items-start gap-2.5 text-sm">
+                <Check
+                  aria-hidden="true"
+                  className="text-foreground mt-0.5 size-4 shrink-0"
+                />
+                <span className="text-muted-foreground leading-relaxed">
+                  {feature}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div aria-hidden="true" className="flex-1" />
+        )}
+
+        {/*
+          No CTA for a plan that cannot be bought. A disabled button would read
+          as a broken control rather than an unreleased one, and the "Coming
+          Soon" badge already carries the status.
+        */}
+        {plan.cta ? (
+          <Button
+            asChild
+            size="lg"
+            variant={featured ? "default" : "outline"}
+            className="mt-8 h-11 w-full px-6"
+          >
+            <Link href={plan.cta.href}>{plan.cta.label}</Link>
+          </Button>
+        ) : null}
 
         {plan.note ? (
           <p className="text-muted-foreground mt-3 text-center text-xs">

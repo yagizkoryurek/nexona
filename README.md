@@ -15,8 +15,13 @@ changers — anyone applying and not hearing back.
 **Built with** Next.js 15 · React 19 · TypeScript · Tailwind CSS v4 · Supabase
 · Google Gemini
 
-> **Status:** the core toolkit is complete and running locally. Development is
-> ongoing — see [Roadmap](#roadmap). Not yet deployed.
+> **Status:** preparing for the first public Beta. The core toolkit is complete
+> and running locally; deployment is still in progress, so there is no live URL
+> yet. Development is ongoing — see [Roadmap](#roadmap).
+>
+> **Pricing is not active.** Every tool is free during the Beta. There is no
+> billing, no payment step, and no subscription anywhere in the product. Paid
+> plans will come later.
 
 ---
 
@@ -48,18 +53,20 @@ achievement that isn't already there.
 
 ## Screenshots
 
-Not yet captured. Placeholders are listed here so they can be dropped in
-without restructuring the README.
+Not yet captured. The intended set is listed here — every row is a real screen
+that exists today — so images can be dropped in without restructuring the
+README.
 
-| View                    | Status  |
-| ----------------------- | ------- |
-| Landing Page            | Pending |
-| Dashboard               | Pending |
-| Resume Analyzer         | Pending |
-| ATS Compatibility Check | Pending |
-| Cover Letter Generator  | Pending |
-| Career Insights         | Pending |
-| Interview Preparation   | Pending |
+| View                    | Route                         | Status  |
+| ----------------------- | ----------------------------- | ------- |
+| Landing Page            | `/`                           | Pending |
+| Dashboard Overview      | `/dashboard`                  | Pending |
+| Resume Analyzer         | `/dashboard/resume-analyzer`  | Pending |
+| ATS Compatibility Check | `/dashboard/ats-checker`      | Pending |
+| Cover Letter Generator  | `/dashboard/cover-letter`     | Pending |
+| Interview Preparation   | `/dashboard/interview-prep`   | Pending |
+| Career Insights         | `/dashboard/career-insights`  | Pending |
+| Resume Optimizer        | `/dashboard/resume-optimizer` | Pending |
 
 <!--
 Add images to docs/screenshots/ and replace the table above, e.g.:
@@ -146,7 +153,7 @@ redirect URLs) are documented in [CLAUDE.md](CLAUDE.md).
 
 ```
 src/
-  app/              Routes only — landing, (auth), (legal), dashboard
+  app/              Routes only — landing, (auth), (legal), (company), dashboard
   components/       Shared UI; ui/ holds shadcn-generated primitives
   lib/
     ai/             One module per AI tool + a shared Gemini client
@@ -167,9 +174,6 @@ behind it.
 
 Genuinely open work, roughly in priority order.
 
-- [ ] **Register the middleware** — it lives at the repo root but the app is
-      under `src/`, so Next.js never loads it. The dashboard's layout guard
-      still protects every route, but the documented second layer is inert.
 - [ ] **Automated tests** — there is no test suite of any kind yet.
 - [ ] **Rate limiting** on the six AI endpoints; every generation currently
       costs an uncapped API call.
@@ -178,8 +182,8 @@ Genuinely open work, roughly in priority order.
       and preparation sets are only reachable by re-selecting a résumé.
 - [ ] **`.doc` support**, or narrow the file picker to the formats that work.
 - [ ] **Align the palette** with the design system.
-- [ ] **Company pages** (`/about`, `/contact`), currently 404.
 - [ ] **Replace the placeholder legal copy** with reviewed documents.
+- [ ] **Billing**, once the Beta ends and paid plans are defined.
 
 A fuller list of known limitations, with the reasoning behind each, is in
 [CLAUDE.md](CLAUDE.md).
