@@ -94,7 +94,9 @@ Add images to docs/screenshots/ and replace the table above, e.g.:
 
 ## Getting Started
 
-**Prerequisites:** Node.js 20+ and pnpm 9+ (developed on pnpm 11.17).
+**Prerequisites:** Node.js 22 LTS and pnpm 11.17.0. Both are pinned in the
+repository — `.nvmrc` and `engines.node` for Node, `packageManager` for pnpm —
+so `nvm use` selects the right runtime and Corepack the right pnpm.
 
 ```bash
 git clone https://github.com/yagizkoryurek/nexona.git
