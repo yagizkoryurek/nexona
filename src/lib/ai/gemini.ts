@@ -1,11 +1,19 @@
 import { GoogleGenAI, type Schema } from "@google/genai";
 import type { z } from "zod";
 
+import { requireGeminiApiKey } from "@/lib/env";
+
 // One client for the process. Each AI module used to construct its own; the
 // client holds no per-request state (unlike the Supabase server client, which
 // is cookie-scoped), so a single shared instance behaves identically with one
 // fewer place for the API key to be read.
-const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+//
+// The key is validated rather than passed through raw. `GoogleGenAI` does throw
+// on a null key, but its message — "An API Key must be set when running in an
+// unspecified environment" — is the *same* text produced when this module is
+// pulled into the browser bundle, so a missing key and a client-boundary
+// regression were previously indistinguishable in a log.
+const genai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 
 // Single place to change the model. It previously lived in every AI module,
 // which meant a model swap was an N-file edit.

@@ -5,6 +5,7 @@ import {
   DEFAULT_AUTHENTICATED_PATH,
   safeRedirectPath,
 } from "@/lib/auth-redirect";
+import { supabaseAnonKey, supabaseUrl } from "@/lib/env";
 
 /** Requires a session. Everything nested underneath is covered too. */
 const PROTECTED_PREFIXES = [DEFAULT_AUTHENTICATED_PATH];
@@ -39,34 +40,30 @@ const isProtected = (pathname: string) =>
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet, headers) {
-          for (const { name, value } of cookiesToSet) {
-            request.cookies.set(name, value);
-          }
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet, headers) {
+        for (const { name, value } of cookiesToSet) {
+          request.cookies.set(name, value);
+        }
 
-          supabaseResponse = NextResponse.next({ request });
+        supabaseResponse = NextResponse.next({ request });
 
-          for (const { name, value, options } of cookiesToSet) {
-            supabaseResponse.cookies.set(name, value, options);
-          }
+        for (const { name, value, options } of cookiesToSet) {
+          supabaseResponse.cookies.set(name, value, options);
+        }
 
-          // Responses that set auth cookies must never be cached by a CDN or
-          // proxy, or one user's session could be served to another.
-          for (const [key, value] of Object.entries(headers)) {
-            supabaseResponse.headers.set(key, value);
-          }
-        },
+        // Responses that set auth cookies must never be cached by a CDN or
+        // proxy, or one user's session could be served to another.
+        for (const [key, value] of Object.entries(headers)) {
+          supabaseResponse.headers.set(key, value);
+        }
       },
     },
-  );
+  });
 
   // `getUser()` rather than `getSession()`: the latter trusts whatever is in
   // the cookie without verifying it, which is not good enough for a decision
