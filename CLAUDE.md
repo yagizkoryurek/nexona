@@ -1038,15 +1038,21 @@ Important Notes for the routine that produced these.
   still redirects to a hardcoded `/sign-in?next=/dashboard`, but the middleware
   answers first and encodes the real path, so deep links keep their destination
   in practice.
-- **Supabase's transactional email is rate limited, and the sign-up form hides
-  it.** The built-in email service allows only a couple of sends per hour on a
-  free project. Once exhausted, `/signup` and `/recover` return `429` with
-  `error_code: over_email_send_rate_limit`, and no user row is created for a
-  rejected sign-up. `signUp` maps every error other than `user_already_exists`
-  to "Something went wrong. Please try again." — so a throttled user is told to
+- **Supabase Auth email sending is rate limited, and the sign-up form hides
+  it.** This holds regardless of email provider: custom SMTP (now configured
+  via Brevo) changes who delivers the email, not whether Supabase Auth throttles
+  how many it will send. The built-in provider's limit is a couple of sends per
+  hour on a free project; with custom SMTP configured, Supabase's own default
+  is higher and adjustable under Authentication → Rate Limits in the
+  dashboard — the exact number isn't pinned here since it's a dashboard setting,
+  not something this repository controls or verifies. Once exhausted, `/signup`
+  and `/recover` still return `429` with `error_code:
+  over_email_send_rate_limit`, and no user row is created for a rejected
+  sign-up. `signUp` maps every error other than `user_already_exists` to
+  "Something went wrong. Please try again." — so a throttled user is told to
   retry, which consumes further attempts. Handling that code with an honest
-  message is a worthwhile fix; configuring custom SMTP removes the limit.
-  Testing several auth flows in one sitting will hit this.
+  message is still a worthwhile fix and remains Sprint 10.4 scope. Testing
+  several auth flows in one sitting can still hit this.
 - **`src/middleware.ts` does not reliably hot-reload** in `next dev`. After
   editing it, restart the dev server before concluding a change didn't work.
 
