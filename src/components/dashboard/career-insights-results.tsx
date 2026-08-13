@@ -16,6 +16,8 @@ type CareerInsightsResultsProps = {
   fileName: string;
   /** False when the insights were generated but could not be saved. */
   persisted: boolean;
+  /** True while a regenerate request is in flight — disables "Generate again". */
+  pending: boolean;
   onReset: () => void;
   onRegenerate: () => void;
 };
@@ -60,6 +62,7 @@ export function CareerInsightsResults({
   insights,
   fileName,
   persisted,
+  pending,
   onReset,
   onRegenerate,
 }: CareerInsightsResultsProps) {
@@ -239,9 +242,10 @@ export function CareerInsightsResults({
           variant="outline"
           size="lg"
           onClick={onRegenerate}
+          disabled={pending}
           className="h-11 px-6"
         >
-          Generate again
+          {pending ? "Generating…" : "Generate again"}
         </Button>
       </div>
     </div>

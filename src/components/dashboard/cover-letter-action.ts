@@ -7,6 +7,11 @@ import {
   coverLetterInputSchema,
   type CoverLetterInput,
 } from "@/lib/ai/cover-letter-schema";
+import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 
 const analysisIdSchema = z.string().uuid();
@@ -80,6 +85,11 @@ export async function generateCoverLetter(
     return { error: "That analysis couldn't be found." };
   }
 
+  const reservation = await reserveAiUsage(supabase, "cover-letter");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   let letter: CoverLetter;
   try {
     letter = await requestCoverLetter(
@@ -99,6 +109,7 @@ export async function generateCoverLetter(
     // cause — a provider outage, a quota rejection, a truncated response —
     // must not vanish.
     console.error("Cover letter generation failed:", error);
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
 
     if (error instanceof z.ZodError) {
       return {
@@ -107,6 +118,7 @@ export async function generateCoverLetter(
     }
     return { error: "The letter failed to generate. Please try again." };
   }
+  await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
 
   const { error: insertError } = await supabase.from("cover_letters").insert({
     analysis_id: idResult.data,

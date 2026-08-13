@@ -3,6 +3,11 @@
 import { z } from "zod";
 
 import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
+import {
   requestResumeOptimization,
   type ResumeOptimization,
 } from "@/lib/ai/resume-optimization";
@@ -53,6 +58,11 @@ export async function optimizeResume(
     return { error: "That analysis couldn't be found." };
   }
 
+  const reservation = await reserveAiUsage(supabase, "resume-optimizer");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   try {
     const optimization = await requestResumeOptimization(row.resume_text, {
       overallScore: row.overall_score,
@@ -63,6 +73,7 @@ export async function optimizeResume(
       suggestions: row.suggestions as string[],
     });
 
+    await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
     return { data: optimization };
   } catch (error) {
     // Logged, not surfaced: the user-facing strings stay generic, but the real
@@ -70,6 +81,7 @@ export async function optimizeResume(
     // must not vanish silently. Debugging this pipeline without it means
     // re-adding instrumentation from scratch.
     console.error("Resume optimization failed:", error);
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
 
     if (error instanceof z.ZodError) {
       return {

@@ -28,12 +28,24 @@ export function AtsChecker({ analyses }: AtsCheckerProps) {
   // Kept so "Run a fresh audit" knows what to re-audit without re-selecting.
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
+  // Set synchronously, before `phase` leaves "results", so the results view's
+  // own refresh button disables itself on the same click rather than relying
+  // solely on the phase transition (and its unmount) to land first. A rapid
+  // double-click could otherwise fire two Gemini calls before that unmount
+  // commits; the server-side reservation is the backstop if it still does.
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+
   const runAudit = async (analysisId: string, refresh: boolean) => {
     setAuditError(null);
     setSelectedId(analysisId);
+    if (refresh) {
+      setIsRefreshing(true);
+    }
     setPhase("auditing");
 
     const response = await auditResume(analysisId, refresh);
+
+    setIsRefreshing(false);
 
     if ("error" in response) {
       setAuditError(response.error);
@@ -49,6 +61,7 @@ export function AtsChecker({ analyses }: AtsCheckerProps) {
     setResult(null);
     setAuditError(null);
     setSelectedId(null);
+    setIsRefreshing(false);
     setPhase("select");
   };
 
@@ -59,9 +72,10 @@ export function AtsChecker({ analyses }: AtsCheckerProps) {
         atsScore={result.atsScore}
         fileName={result.fileName}
         persisted={result.persisted}
+        pending={isRefreshing}
         onReset={reset}
         onRefresh={() => {
-          if (selectedId) {
+          if (selectedId && !isRefreshing) {
             void runAudit(selectedId, true);
           }
         }}

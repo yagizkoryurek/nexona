@@ -34,12 +34,25 @@ export function CareerInsightsGenerator({
   // Kept so "Generate again" knows what to regenerate without re-selecting.
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
+  // Set synchronously, before `phase` leaves "results", so the results
+  // view's own regenerate button disables itself on the same click rather
+  // than relying solely on the phase transition (and its unmount) to land
+  // first. A rapid double-click could otherwise fire two Gemini calls before
+  // that unmount commits; the server-side reservation is the backstop if it
+  // still does.
+  const [isRegenerating, setIsRegenerating] = React.useState(false);
+
   const runInsights = async (analysisId: string, refresh: boolean) => {
     setInsightsError(null);
     setSelectedId(analysisId);
+    if (refresh) {
+      setIsRegenerating(true);
+    }
     setPhase("generating");
 
     const response = await generateCareerInsights(analysisId, refresh);
+
+    setIsRegenerating(false);
 
     if ("error" in response) {
       setInsightsError(response.error);
@@ -55,6 +68,7 @@ export function CareerInsightsGenerator({
     setResult(null);
     setInsightsError(null);
     setSelectedId(null);
+    setIsRegenerating(false);
     setPhase("select");
   };
 
@@ -64,9 +78,10 @@ export function CareerInsightsGenerator({
         insights={result.insights}
         fileName={result.fileName}
         persisted={result.persisted}
+        pending={isRegenerating}
         onReset={reset}
         onRegenerate={() => {
-          if (selectedId) {
+          if (selectedId && !isRegenerating) {
             void runInsights(selectedId, true);
           }
         }}

@@ -28,6 +28,8 @@ type AtsAuditResultsProps = {
   fileName: string;
   /** False when the audit was generated but could not be saved. */
   persisted: boolean;
+  /** True while a refresh request is in flight — disables "Run a fresh audit". */
+  pending: boolean;
   onReset: () => void;
   onRefresh: () => void;
 };
@@ -152,6 +154,7 @@ export function AtsAuditResults({
   atsScore,
   fileName,
   persisted,
+  pending,
   onReset,
   onRefresh,
 }: AtsAuditResultsProps) {
@@ -327,9 +330,10 @@ export function AtsAuditResults({
           variant="outline"
           size="lg"
           onClick={onRefresh}
+          disabled={pending}
           className="h-11 px-6"
         >
-          Run a fresh audit
+          {pending ? "Auditing…" : "Run a fresh audit"}
         </Button>
       </div>
     </div>

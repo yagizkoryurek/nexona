@@ -8,6 +8,11 @@ import {
   requestInterviewPrep,
   type InterviewPrep,
 } from "@/lib/ai/interview-prep";
+import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 
 const analysisIdSchema = z.string().uuid();
@@ -117,6 +122,13 @@ export async function generateInterviewPrep(
     }
   }
 
+  // Reserved only now, after the cache-hit path above has had its chance to
+  // return — see ats-audit-action.ts for the identical reasoning.
+  const reservation = await reserveAiUsage(supabase, "interview-prep");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   let prep: InterviewPrep;
   try {
     prep = await requestInterviewPrep(row.resume_text, {
@@ -129,6 +141,7 @@ export async function generateInterviewPrep(
     // cause — a provider outage, a quota rejection, a truncated response —
     // must not vanish.
     console.error("Interview prep generation failed:", error);
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
 
     if (error instanceof z.ZodError) {
       return {
@@ -138,6 +151,7 @@ export async function generateInterviewPrep(
     }
     return { error: "The preparation failed. Please try again." };
   }
+  await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
 
   const { error: insertError } = await supabase.from("interview_preps").insert({
     analysis_id: idResult.data,

@@ -8,6 +8,11 @@ import {
   requestAtsAudit,
   type AtsAudit,
 } from "@/lib/ai/ats-audit";
+import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 
 const analysisIdSchema = z.string().uuid();
@@ -115,6 +120,15 @@ export async function auditResume(
     }
   }
 
+  // Reserved only now, after the cache-hit path above has had its chance to
+  // return — so re-opening a stored audit never consumes a usage slot, and a
+  // `refresh` (which skips the cache-check block entirely) reserves like any
+  // other fresh generation.
+  const reservation = await reserveAiUsage(supabase, "ats-checker");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   let audit: AtsAudit;
   try {
     audit = await requestAtsAudit(row.resume_text);
@@ -123,6 +137,7 @@ export async function auditResume(
     // cause — a provider outage, a quota rejection, a truncated response —
     // must not vanish.
     console.error("ATS audit failed:", error);
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
 
     if (error instanceof z.ZodError) {
       return {
@@ -131,6 +146,7 @@ export async function auditResume(
     }
     return { error: "The audit failed. Please try again." };
   }
+  await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
 
   const { error: insertError } = await supabase.from("ats_audits").insert({
     analysis_id: idResult.data,

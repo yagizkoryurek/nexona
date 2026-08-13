@@ -8,6 +8,11 @@ import {
   requestCareerInsights,
   type CareerInsights,
 } from "@/lib/ai/career-insights";
+import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
 import { createClient } from "@/lib/supabase/server";
 
 const analysisIdSchema = z.string().uuid();
@@ -113,6 +118,13 @@ export async function generateCareerInsights(
     }
   }
 
+  // Reserved only now, after the cache-hit path above has had its chance to
+  // return — see ats-audit-action.ts for the identical reasoning.
+  const reservation = await reserveAiUsage(supabase, "career-insights");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   let insights: CareerInsights;
   try {
     insights = await requestCareerInsights(row.resume_text, {
@@ -128,6 +140,7 @@ export async function generateCareerInsights(
     // cause — a provider outage, a quota rejection, a truncated response —
     // must not vanish.
     console.error("Career insights generation failed:", error);
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
 
     if (error instanceof z.ZodError) {
       return {
@@ -137,6 +150,7 @@ export async function generateCareerInsights(
     }
     return { error: "The insights generation failed. Please try again." };
   }
+  await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
 
   const { error: insertError } = await supabase.from("career_insights").insert({
     analysis_id: idResult.data,

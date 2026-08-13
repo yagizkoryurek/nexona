@@ -6,6 +6,11 @@ import {
   requestResumeAnalysis,
   type ResumeAnalysis,
 } from "@/lib/ai/resume-analysis";
+import {
+  formatRateLimitError,
+  reserveAiUsage,
+  resolveAiUsage,
+} from "@/lib/ai/rate-limit";
 import { validateResumeFile } from "@/lib/resume-file";
 import { extractResumeText } from "@/lib/resume-text-extraction";
 import { createClient } from "@/lib/supabase/server";
@@ -39,10 +44,17 @@ export async function analyzeResume(
     return { error: extraction.error };
   }
 
+  const reservation = await reserveAiUsage(supabase, "resume-analyzer");
+  if (!reservation.allowed) {
+    return { error: formatRateLimitError(reservation) };
+  }
+
   let analysis: ResumeAnalysis;
   try {
     analysis = await requestResumeAnalysis(extraction.text);
   } catch (error) {
+    await resolveAiUsage(supabase, reservation.reservationId, "failed");
+
     if (error instanceof z.ZodError) {
       return {
         error:
@@ -51,6 +63,7 @@ export async function analyzeResume(
     }
     return { error: "The analysis failed. Please try again." };
   }
+  await resolveAiUsage(supabase, reservation.reservationId, "succeeded");
 
   const { error: insertError } = await supabase.from("resume_analyses").insert({
     user_id: user.id,
