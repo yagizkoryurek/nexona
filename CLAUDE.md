@@ -950,15 +950,6 @@ Important Notes for the routine that produced these.
   Rendering it from a Server Component crashes the build with
   `createContext is not a function`. Every consumer currently declares the
   boundary itself. Fixing it at the source means editing a generated file.
-- **No rate limiting on any AI route.** A signed-in user can click Analyze,
-  Optimize, "Run a fresh audit", Generate cover letter, or Generate again
-  (Career Insights, Interview Prep) repeatedly; each click costs an API call,
-  and Analyze, audit, cover letter, career insights, and interview prep
-  generation each insert a row. Six surfaces now, up from one. The ATS Check's,
-  Career Insights', and Interview Prep's stored-result paths incidentally avoid
-  the cost on re-open, but every "Generate again" is unthrottled, and every
-  cover letter generation is unthrottled by design (see Current Features —
-  there is no stored-result path to short-circuit).
 - **No history/detail UI.** All five pickers read `resume_analyses` back, and
   the ATS Check, Career Insights, and Interview Prep read their own tables
   back, so the SELECT policies are exercised — but these are selection lists,
@@ -1047,7 +1038,7 @@ Important Notes for the routine that produced these.
   dashboard — the exact number isn't pinned here since it's a dashboard setting,
   not something this repository controls or verifies. Once exhausted, `/signup`
   and `/recover` still return `429` with `error_code:
-  over_email_send_rate_limit`, and no user row is created for a rejected
+over_email_send_rate_limit`, and no user row is created for a rejected
   sign-up. `signUp` maps every error other than `user_already_exists` to
   "Something went wrong. Please try again." — so a throttled user is told to
   retry, which consumes further attempts. Handling that code with an honest

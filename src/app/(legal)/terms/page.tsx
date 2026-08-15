@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: "Terms of Service",
 };
 
-const LAST_UPDATED = "January 1, 2026";
+const LAST_UPDATED = "August 15, 2026";
 
 export default function TermsOfServicePage() {
   return (
@@ -100,10 +100,11 @@ export default function TermsOfServicePage() {
             5. Subscriptions and Payment
           </h2>
           <p className="text-muted-foreground mt-3 text-sm leading-relaxed text-pretty">
-            Paid plans are billed in advance on a recurring basis as described
-            at the time of purchase. Fees are non-refundable except where
-            required by law. You may cancel a paid plan at any time, and
-            cancellation takes effect at the end of the current billing period.
+            The Service is currently free during the Beta period. There is no
+            billing, no payment step, and no subscription of any kind. If paid
+            plans are introduced in the future, this section will be updated in
+            advance to describe pricing, billing terms, and cancellation before
+            any payment is required.
           </p>
         </section>
 

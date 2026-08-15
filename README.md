@@ -15,9 +15,9 @@ changers — anyone applying and not hearing back.
 **Built with** Next.js 15 · React 19 · TypeScript · Tailwind CSS v4 · Supabase
 · Google Gemini
 
-> **Status:** preparing for the first public Beta. The core toolkit is complete
-> and running locally; deployment is still in progress, so there is no live URL
-> yet. Development is ongoing — see [Roadmap](#roadmap).
+> **Status:** first public Beta. The core toolkit is complete and deployed —
+> live at [nexona-nine.vercel.app](https://nexona-nine.vercel.app). Development
+> is ongoing — see [Roadmap](#roadmap).
 >
 > **Pricing is not active.** Every tool is free during the Beta. There is no
 > billing, no payment step, and no subscription anywhere in the product. Paid
@@ -132,6 +132,7 @@ applied by hand; each one is written to be safe to re-run.
 0001_resume_analyses.sql   0004_cover_letters.sql
 0002_add_resume_text.sql   0005_career_insights.sql
 0003_ats_audits.sql        0006_interview_preps.sql
+0007_ai_usage_events.sql
 ```
 
 Required Supabase project settings (email confirmations, password length,
@@ -177,9 +178,6 @@ behind it.
 Genuinely open work, roughly in priority order.
 
 - [ ] **Automated tests** — there is no test suite of any kind yet.
-- [ ] **Rate limiting** on the six AI endpoints; every generation currently
-      costs an uncapped API call.
-- [ ] **Deploy** to Vercel, and confirm function timeouts on the target plan.
 - [ ] **History and detail views** — past analyses, audits, letters, insights,
       and preparation sets are only reachable by re-selecting a résumé.
 - [ ] **`.doc` support**, or narrow the file picker to the formats that work.
@@ -188,7 +186,8 @@ Genuinely open work, roughly in priority order.
 - [ ] **Billing**, once the Beta ends and paid plans are defined.
 
 A fuller list of known limitations, with the reasoning behind each, is in
-[CLAUDE.md](CLAUDE.md).
+[CLAUDE.md](CLAUDE.md). Released changes are tracked in
+[CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -207,7 +206,7 @@ covers:
 
 ## License
 
-Proprietary. All rights reserved.
+Proprietary. All rights reserved. See [LICENSE](LICENSE).
 
 This repository is not open-source licensed. No permission is granted to use,
 copy, modify, or distribute this software.

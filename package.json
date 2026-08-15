@@ -1,6 +1,13 @@
 {
   "name": "nexona",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
+  "description": "AI-powered résumé analysis and application toolkit.",
+  "author": "Yağız Koryürek",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yagizkoryurek/nexona.git"
+  },
   "private": true,
   "engines": {
     "node": "22.x"
