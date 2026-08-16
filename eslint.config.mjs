@@ -19,6 +19,11 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // The Expo app is a self-contained project with its own toolchain
+      // (its own tsconfig, its own `expo lint`). Linting it with the web
+      // app's Next.js config reports errors against React Native conventions
+      // it was never meant to satisfy.
+      "mobile/**",
     ],
   },
   prettier,
