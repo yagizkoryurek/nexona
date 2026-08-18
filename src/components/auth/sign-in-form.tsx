@@ -26,6 +26,11 @@ const NOTICES = {
     message:
       "That link is invalid or has expired. Request a new one and try again.",
   },
+  "account-deleted": {
+    variant: "info",
+    message:
+      "Your account and all of its data have been permanently deleted. Thanks for trying Nexona.",
+  },
 } as const;
 
 type SignInFormProps = {

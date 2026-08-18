@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 
 import { dashboardNavItems, isNavItemActive } from "./dashboard-nav-items";
+import { SettingsLink } from "./settings-link";
 import { VisitWebsiteLink } from "./visit-website-link";
 
 /**
@@ -136,6 +137,7 @@ export function DashboardSidebar() {
 
       <SidebarFooter className="p-4">
         <VisitWebsiteLink />
+        <SettingsLink />
         <SidebarSeparator className="my-1" />
         <SignOutButton />
       </SidebarFooter>

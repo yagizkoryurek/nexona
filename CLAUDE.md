@@ -185,6 +185,32 @@ no arithmetic path back to stated résumé content: scores, ratings, percentages
 of "fit" or "readiness", salary figures, and market or demand statistics. The
 distinction is computability from the source, not the presence of a digit.
 
+**Account Settings** — `/dashboard/settings`, reached from a link in the
+sidebar footer beside Sign Out rather than from `dashboardNavItems`, which
+stays a list of Overview plus the six AI tools. Four sections: account
+information (email, name, member-since, verification status — all read-only,
+since editing either would need new auth behaviour), security, privacy/legal
+links to `/privacy` and `/terms`, and a Danger Zone.
+
+The security section's one action is **"Send password reset link"**, which
+calls the existing `requestPasswordReset` unchanged — the same action
+`/forgot-password` uses. Linking to `/forgot-password` instead would not work:
+that path is in the middleware's `AUTH_ONLY_PATHS`, so a signed-in user is
+bounced to the dashboard before it renders. The button does not return after a
+successful send, because Supabase Auth throttles outgoing mail.
+
+**Delete Account** — in the Danger Zone, gated behind an inline type-`DELETE`-
+to-confirm step. Confirmation is inline rather than a modal because there is no
+`dialog`/`alert-dialog` primitive in `components/ui/`, and adding one to ask a
+single question would introduce a primitive with one consumer. Success clears
+the session and redirects to `/sign-in?notice=account-deleted`, a new entry in
+the `NOTICES` map that `sign-in-form.tsx` already used for cross-flow handoffs.
+
+Deletion runs entirely through `public.delete_account()` (migration `0009`) —
+see Database. **Web only; the mobile app has no deletion UI yet**, which is a
+store-policy gap once the app ships (both Apple and Google require in-app
+account deletion for apps that support account creation).
+
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
 stored. Its extracted text **is** now retained (`resume_text`, added for the
@@ -313,6 +339,7 @@ src/app/
     cover-letter/page.tsx      Cover Letter Generator (maxDuration lives here)
     career-insights/page.tsx   Career Insights (maxDuration lives here)
     interview-prep/page.tsx    Interview Preparation (maxDuration lives here)
+    settings/page.tsx          Account Settings (no maxDuration — no AI call)
 
 src/components/
   ui/                          shadcn-generated primitives — DO NOT EDIT
@@ -336,6 +363,10 @@ src/components/
                                interview-prep-generator,
                                interview-prep-results,
                                interview-prep-action.ts,
+                               settings-link, settings-section,
+                               password-reset-card, delete-account-card,
+                               delete-account-action.ts,
+                               delete-account-action.test.ts,
                                dashboard-panel, list-panel
   hero/ features/ pricing/     Landing page sections
   faq/ footer/ navbar/ how-it-works/
@@ -812,6 +843,42 @@ output are naturally their own columns, so a shared table would leave half its
 columns null. Among the three above the shape genuinely is identical, so
 versioning is the whole reason.
 
+**Account deletion** (migration `0009`) — `public.delete_account()`, a
+`SECURITY DEFINER` function owned by `postgres`. It adds **no table, no column,
+and no policy**.
+
+Five things about it are deliberate and must not be "simplified":
+
+- **It takes no parameters.** Identity comes only from `auth.uid()`, so there
+  is no argument for a caller to point at another account. Deleting someone
+  else's data is impossible by construction, not by policy. Do not add a
+  `p_user_id`.
+- **`set search_path = ''`**, not `public` as in `0007`. This function runs
+  with BYPASSRLS against `auth.users`, so a shadowing object in an
+  earlier-resolving schema would be shadowing identifiers inside the most
+  privileged function in the database. Every identifier in it is
+  schema-qualified.
+- **No service-role key.** `auth.users` is owned by `supabase_auth_admin` and
+  grants DELETE to only three roles, `postgres` among them, and `postgres`
+  carries BYPASSRLS — so a definer function owned by `postgres` can delete the
+  row without introducing a key that bypasses RLS on every table for every
+  user. The repo still contains no service-role key anywhere.
+- **No DELETE policies were added.** Every user-owned table already cascades
+  from `auth.users`, so one row removal takes all six with it. Granting
+  row-level DELETE instead would take six policies, would not remove the
+  `auth.users` row anyway, and would break the AI rate limiter, whose whole
+  guarantee is that a user cannot delete their own `'started'` rows to reset a
+  quota. The function **bypasses** RLS rather than relaxing it, so the "no
+  UPDATE or DELETE policy on any table" property survives intact.
+- **It must be applied as `postgres`** — which the SQL Editor uses. Applied as
+  any other role it would be created successfully and then fail at call time.
+
+One honest consequence: deleting an account drops that user's
+`ai_usage_events` rows too, so an AI quota can be reset by deleting the account
+and signing up again. That is not a regression the function introduces —
+signing up with a second address always did the same — and the price is the
+irreversible loss of every stored document.
+
 Migrations are applied **manually** in the Supabase SQL Editor; there is no
 Supabase CLI project in this repo. Every migration must be safe to re-run.
 
@@ -919,8 +986,20 @@ with `pnpm dlx shadcn@latest add <component>`.
 
 **Shipped** — Landing page, public legal pages, Authentication, Dashboard
 shell, Resume Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter
-Generator, Career Insights, Interview Preparation. See Current Features for
-what each does and AI Architecture for how the six AI-backed tools are built.
+Generator, Career Insights, Interview Preparation, Account Settings (including
+web Delete Account). See Current Features for what each does and AI
+Architecture for how the six AI-backed tools are built.
+
+**Delete Account is verified only as far as static analysis reaches.** Its
+migration and Server Action are covered by
+`delete-account-action.test.ts` — no-parameter signature, `auth.uid()`-only
+identity, `search_path = ''`, the revoke/grant pair, no policies, no
+service-role, and an argument-free `.rpc()` call — and those assertions were
+mutation-tested to confirm they fail when each property is violated. The
+plpgsql body was parsed and validated against the live database via a
+session-local `pg_temp` function, which persists nothing. **The migration has
+not been applied**, so the function does not yet exist in `public`, and no
+end-to-end deletion has been executed against a real account.
 
 **On what "verified" means here.** Every tool has passed `format`, `lint`,
 `typecheck`, `build`, the `.next/static/` Gemini-bundle check, a live model
@@ -1002,12 +1081,16 @@ Important Notes for the routine that produced these.
   forbids each explicitly; that half is a mitigation, not a guarantee. Note
   that derived arithmetic on stated résumé numbers is **permitted** and is not
   a violation of this rule — see Current Features for where the line sits.
-- **No automated test suite.** There is no unit, integration, or end-to-end
-  test anywhere in the repo — no Vitest, Jest, Playwright, or Cypress in
-  `package.json`. Verification is `format`/`lint`/`typecheck`/`build`, throwaway
-  runtime harnesses written per sprint and then discarded, and manual
-  click-through. Every regression guard this project has is therefore a person
-  remembering to look.
+- **The test suite is thin and covers no runtime behaviour.** `pnpm test` runs
+  Node's built-in runner (`node:test` + `--experimental-strip-types`) over
+  `src/**/*.test.ts` — there is still no Vitest, Jest, Playwright or Cypress,
+  and adding one remains its own decision. Two files exist:
+  `resume-text-extraction.test.ts` (pure string logic plus a migration-matches-
+  constant check) and `delete-account-action.test.ts` (static assertions over
+  SQL and Server Action **source text**). Neither executes a query, renders a
+  component, or calls Gemini. Everything else is still
+  `format`/`lint`/`typecheck`/`build`, throwaway per-sprint harnesses, and
+  manual click-through.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
 - **The analysis prompt was written for Claude** and carried over to Gemini
