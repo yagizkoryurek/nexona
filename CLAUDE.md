@@ -313,10 +313,43 @@ are live. The middleware answers first, so a signed-out deep link is redirected
 before the layout renders; the layout check remains as the backstop that holds
 even if a route ever falls outside the matcher.
 
+**Security headers** are set in `next.config.ts`'s `headers()` for `/(.*)`, so
+they reach every response including redirects and API routes:
+`Content-Security-Policy`, `X-Content-Type-Options`, `X-Frame-Options`,
+`Referrer-Policy`, `Permissions-Policy`. They are deliberately **not** in the
+middleware — its matcher excludes `/`, `/terms` and `/privacy`, the pages that
+most need clickjacking and referrer protection.
+
+Two things about the CSP are deliberate and easy to "tighten" wrongly:
+
+- **`script-src` carries `'unsafe-inline'`, and removing it breaks the whole
+  app.** Next.js streams the RSC payload as inline `self.__next_f.push(...)`
+  scripts — 20 on the landing page — so without it every page renders and
+  never hydrates. The strict alternative is a per-request nonce, which was
+  considered and rejected: nonces are per-request, so `/`, `/terms` and
+  `/privacy` would lose static prerendering, and the middleware matcher would
+  have to widen to every route. What the policy still buys is that no script
+  may load from an external origin, the app cannot be framed, forms cannot
+  post off-origin, and `<base>` cannot be hijacked. What it does not buy is
+  protection from injected inline script — so the repo-wide absence of
+  `dangerouslySetInnerHTML`/`innerHTML` has to stay true for this to hold.
+- **`connect-src` is `'self'` only.** The browser never calls Supabase or
+  Gemini directly — `src/lib/supabase/client.ts` has no callers at all. Wiring
+  that browser client up for a client-side read means adding the Supabase URL
+  here, or those calls fail a CSP check.
+
+`'unsafe-eval'` and `ws:` are added **only** when
+`process.env.NODE_ENV === "development"`, for Fast Refresh; both are verified
+absent from production responses.
+
 ## Project Structure
 
 ```
 supabase/migrations/           SQL, applied manually via Supabase SQL Editor
+
+next.config.ts                 Security headers (headers() → every route).
+                               NOT the middleware: its matcher excludes the
+                               public pages that most need them
 
 src/middleware.ts              Thin call site → lib/supabase/middleware, plus
                                the matcher. MUST live under src/ — this project
