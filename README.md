@@ -133,6 +133,8 @@ applied by hand; each one is written to be safe to re-run.
 0002_add_resume_text.sql   0005_career_insights.sql
 0003_ats_audits.sql        0006_interview_preps.sql
 0007_ai_usage_events.sql
+0008_resume_text_length_limit.sql
+0009_delete_account.sql
 ```
 
 Required Supabase project settings (email confirmations, password length,
@@ -177,7 +179,6 @@ behind it.
 
 Genuinely open work, roughly in priority order.
 
-- [ ] **Automated tests** — there is no test suite of any kind yet.
 - [ ] **History and detail views** — past analyses, audits, letters, insights,
       and preparation sets are only reachable by re-selecting a résumé.
 - [ ] **`.doc` support**, or narrow the file picker to the formats that work.
