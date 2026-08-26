@@ -31,34 +31,47 @@ async function currentAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/**
+ * What varies between the two POST flavours below: the body, and whether a
+ * Content-Type has to be stated. Everything else — the bearer header, the
+ * refresh-and-retry, the error envelope — is identical, so it lives in one
+ * place rather than being copied per tool.
+ */
+type AuthedBody = {
+  body: BodyInit;
+  headers?: Record<string, string>;
+};
+
 async function send(
   path: string,
-  body: FormData,
+  request: AuthedBody,
   accessToken: string
 ): Promise<Response> {
   return fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     headers: {
+      ...request.headers,
       Authorization: `Bearer ${accessToken}`,
-      // Content-Type is deliberately omitted: fetch derives it from the
-      // FormData body and appends the multipart boundary, which cannot be
-      // written by hand.
     },
-    body,
+    body: request.body,
   });
 }
 
 /**
- * POSTs multipart form data to an /api/mobile/* route.
+ * POSTs to an /api/mobile/* route with the caller's Supabase session attached.
  *
  * On 401 the session is refreshed once and the request retried once. If that
  * also fails the user is signed out locally, which flips the navigation guard
  * in app/_layout.tsx and returns them to the sign-in screen — rather than the
  * app inventing its own recovery UI for a session that is genuinely gone.
+ *
+ * Note the retry replays the same body. That is safe for both callers here: a
+ * FormData built from a file URI and a JSON string are each re-readable, unlike
+ * a consumed stream.
  */
-export async function postFormToApi<T>(
+async function postToApi<T>(
   path: string,
-  body: FormData
+  request: AuthedBody
 ): Promise<ApiResult<T>> {
   try {
     const token = await currentAccessToken();
@@ -67,7 +80,7 @@ export async function postFormToApi<T>(
       return { error: SIGNED_OUT_ERROR };
     }
 
-    let response = await send(path, body, token);
+    let response = await send(path, request, token);
 
     if (response.status === 401) {
       const { data, error } = await supabase.auth.refreshSession();
@@ -78,7 +91,7 @@ export async function postFormToApi<T>(
         return { error: SIGNED_OUT_ERROR };
       }
 
-      response = await send(path, body, refreshedToken);
+      response = await send(path, request, refreshedToken);
 
       if (response.status === 401) {
         await supabase.auth.signOut().catch(() => undefined);
@@ -93,6 +106,33 @@ export async function postFormToApi<T>(
       error: "We couldn't reach Nexona. Check your connection and try again.",
     };
   }
+}
+
+/**
+ * POSTs multipart form data — the file-upload tools.
+ *
+ * Content-Type is deliberately not set: fetch derives it from the FormData body
+ * and appends the multipart boundary, which cannot be written by hand.
+ */
+export async function postFormToApi<T>(
+  path: string,
+  body: FormData
+): Promise<ApiResult<T>> {
+  return postToApi<T>(path, { body });
+}
+
+/**
+ * POSTs a JSON body — the tools that act on an already-stored analysis rather
+ * than on a freshly uploaded file.
+ */
+export async function postJsonToApi<T>(
+  path: string,
+  payload: unknown
+): Promise<ApiResult<T>> {
+  return postToApi<T>(path, {
+    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 /**

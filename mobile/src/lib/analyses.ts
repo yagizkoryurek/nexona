@@ -1,0 +1,90 @@
+import type { ApiResult } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
+
+/**
+ * Reads the caller's own resume analyses, for tools that operate on a stored
+ * analysis rather than on a freshly uploaded file.
+ *
+ * This is the one place the app talks to a table rather than to
+ * `/api/mobile/*`, and that is deliberate. The API routes exist because AI
+ * generation needs `GEMINI_API_KEY`, which is server-only — a plain read of the
+ * user's own rows needs no secret. Row Level Security scopes `resume_analyses`
+ * and `ats_audits` to `auth.uid()`, which is exactly the policy the web
+ * dashboard's picker depends on, and the session's bearer token rides on every
+ * PostgREST call from this client. Proxying it through a route would add a
+ * server hop to re-permit a read the client is already entitled to.
+ *
+ * Note there is deliberately no `user_id` filter below. RLS applies it, and
+ * stating it again would imply the query is what enforces ownership.
+ */
+
+export type SelectableAnalysis = {
+  id: string;
+  fileName: string;
+  createdAt: string;
+  overallScore: number;
+  atsScore: number;
+  /** Whether an ATS audit already exists for this analysis. */
+  audited: boolean;
+};
+
+const GENERIC_ERROR = "We couldn't load your resumes. Please try again.";
+
+/**
+ * Lists analyses eligible for an ATS check, newest first.
+ *
+ * Eligibility is a stored `resume_text`. Analyses created before that column
+ * existed have none and are simply absent — not shown as errors, since there is
+ * no backfill path and the original text was never retained.
+ *
+ * `resume_text` is filtered on but never selected: it is the largest column by
+ * far and nothing on this side has a use for it.
+ */
+export async function listAuditableAnalyses(): Promise<
+  ApiResult<SelectableAnalysis[]>
+> {
+  try {
+    const { data, error } = await supabase
+      .from('resume_analyses')
+      .select('id, file_name, created_at, overall_score, ats_score')
+      .not('resume_text', 'is', null)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Failed to list analyses:', error);
+      return { error: GENERIC_ERROR };
+    }
+
+    // A separate query rather than a PostgREST embed: this only needs a set of
+    // ids, and stays predictable without depending on relationship detection.
+    // A failure here is not fatal — the list is still usable without the
+    // "Audited" marker, so it degrades to unannotated rather than to an error.
+    const { data: auditRows, error: auditError } = await supabase
+      .from('ats_audits')
+      .select('analysis_id');
+
+    if (auditError) {
+      console.error('Failed to read audited analysis ids:', auditError);
+    }
+
+    const auditedIds = new Set(
+      (auditRows ?? []).map((row) => row.analysis_id as string)
+    );
+
+    return {
+      data: (data ?? []).map((row) => ({
+        id: row.id as string,
+        fileName: row.file_name as string,
+        createdAt: row.created_at as string,
+        overallScore: row.overall_score as number,
+        atsScore: row.ats_score as number,
+        audited: auditedIds.has(row.id as string),
+      })),
+    };
+  } catch {
+    // Network failure, DNS, timeout — same treatment as lib/api.ts gives them.
+    return {
+      error: "We couldn't reach Nexona. Check your connection and try again.",
+    };
+  }
+}

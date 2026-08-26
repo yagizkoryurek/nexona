@@ -8,8 +8,12 @@ import {
   formatRateLimitError,
   reserveAiUsage,
   resolveAiUsage,
-  type RateLimitReason,
 } from "@/lib/ai/rate-limit";
+import {
+  bearerToken,
+  jsonError,
+  rateLimitStatus,
+} from "@/lib/api/mobile-route";
 import { validateResumeFile } from "@/lib/resume-file";
 import { extractResumeText } from "@/lib/resume-text-extraction";
 import { createBearerClient } from "@/lib/supabase/route-handler";
@@ -18,43 +22,6 @@ import { createBearerClient } from "@/lib/supabase/route-handler";
 // dashboard tool pages — see CLAUDE.md's Known Limitations for why this cap
 // is currently moot on Vercel's Hobby tier.
 export const maxDuration = 60;
-
-function jsonError(
-  error: string,
-  status: number,
-  retryAfterSeconds?: number | null,
-) {
-  const headers =
-    retryAfterSeconds !== null && retryAfterSeconds !== undefined
-      ? { "Retry-After": String(retryAfterSeconds) }
-      : undefined;
-  return Response.json({ error }, { status, headers });
-}
-
-function bearerToken(request: Request): string | null {
-  const header = request.headers.get("authorization");
-  if (!header) return null;
-
-  const [scheme, token] = header.split(" ");
-  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
-
-  return token;
-}
-
-/** Nexona's own limit (429) vs. an unrelated check failure (500) — never a passthrough of a provider status. */
-function rateLimitStatus(reason: RateLimitReason): number {
-  switch (reason) {
-    case "rate_limit_10m":
-    case "rate_limit_hour":
-    case "rate_limit_day":
-    case "concurrency_limit":
-      return 429;
-    case "unauthenticated":
-      return 401;
-    case "check_failed":
-      return 500;
-  }
-}
 
 /**
  * Mobile-facing Resume Analyzer endpoint. Mirrors `analyzeResume`

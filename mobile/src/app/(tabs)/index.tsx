@@ -1,7 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   Platform,
   Pressable,
   ScrollView,
@@ -13,11 +12,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FormError } from '@/components/auth/auth-form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { ListPanel, Panel, Score } from '@/components/ui/panel';
+import { PrimaryButton } from '@/components/ui/primary-button';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
-import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/lib/auth-context';
 import { analyzeResume, type ResumeAnalysis } from '@/lib/resume-analysis';
-import { formatFileSize, validateResumeFile } from '@/lib/resume-file';
+import { validateResumeFile } from '@/lib/resume-file';
 
 /**
  * Resume Analyzer — the mobile counterpart to the web dashboard's tool.
@@ -189,9 +189,26 @@ function Results({
         <ThemedText type="small">{analysis.summary}</ThemedText>
       </Panel>
 
-      <ListPanel title="Strengths" items={analysis.strengths} />
-      <ListPanel title="Weaknesses" items={analysis.weaknesses} />
-      <ListPanel title="Suggestions" items={analysis.suggestions} />
+      {/*
+        These three are `.min(1)` in the server's schema, so the empty copy
+        below should never appear — `emptyMessage` is required on ListPanel for
+        the tools whose lists genuinely can be empty.
+      */}
+      <ListPanel
+        title="Strengths"
+        items={analysis.strengths}
+        emptyMessage="None identified."
+      />
+      <ListPanel
+        title="Weaknesses"
+        items={analysis.weaknesses}
+        emptyMessage="None identified."
+      />
+      <ListPanel
+        title="Suggestions"
+        items={analysis.suggestions}
+        emptyMessage="None identified."
+      />
 
       <PrimaryButton
         label="Analyze another resume"
@@ -200,101 +217,6 @@ function Results({
         onPress={onReset}
       />
     </View>
-  );
-}
-
-/**
- * The web renders these as a `ScoreRing` (an inline SVG). This is a plain
- * numeric readout instead — the app has no SVG dependency, and adding one to
- * draw two circles is not worth it before the rest of the toolkit exists.
- */
-function Score({ label, value }: { label: string; value: number }) {
-  const theme = useTheme();
-
-  return (
-    <View
-      style={[styles.score, { backgroundColor: theme.backgroundElement }]}
-      accessibilityRole="text"
-      accessibilityLabel={`${label} score ${value} out of 100`}>
-      <ThemedText type="title">{value}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {label}
-      </ThemedText>
-    </View>
-  );
-}
-
-function Panel({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  const theme = useTheme();
-
-  return (
-    <View style={[styles.panel, { backgroundColor: theme.backgroundElement }]}>
-      <ThemedText type="smallBold">{title}</ThemedText>
-      {children}
-    </View>
-  );
-}
-
-function ListPanel({ title, items }: { title: string; items: string[] }) {
-  return (
-    <Panel title={title}>
-      {items.map((item) => (
-        <View key={item} style={styles.listItem}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {'•'}
-          </ThemedText>
-          <ThemedText type="small" style={styles.listItemText}>
-            {item}
-          </ThemedText>
-        </View>
-      ))}
-    </Panel>
-  );
-}
-
-/** Same treatment as `AuthButton`, which is not exported for reuse outside the auth screens. */
-function PrimaryButton({
-  label,
-  pendingLabel,
-  pending,
-  onPress,
-}: {
-  label: string;
-  pendingLabel: string;
-  pending: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={pending}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: pending, busy: pending }}
-      accessibilityLabel={pending ? pendingLabel : label}
-      style={({ pressed }) => [
-        styles.button,
-        pressed && styles.pressed,
-        pending && styles.buttonDisabled,
-      ]}>
-      {pending ? (
-        <View style={styles.buttonBusy}>
-          <ActivityIndicator color="#ffffff" size="small" />
-          <ThemedText type="smallBold" style={styles.buttonText}>
-            {pendingLabel}
-          </ThemedText>
-        </View>
-      ) : (
-        <ThemedText type="smallBold" style={styles.buttonText}>
-          {label}
-        </ThemedText>
-      )}
-    </Pressable>
   );
 }
 
@@ -314,37 +236,9 @@ const styles = StyleSheet.create({
   },
   subtitle: { marginTop: -Spacing.two },
   centered: { textAlign: 'center' },
-  button: {
-    backgroundColor: '#3c87f7',
-    borderRadius: 10,
-    paddingVertical: Spacing.three,
-    alignItems: 'center',
-    marginTop: Spacing.two,
-  },
   pressed: { opacity: 0.85 },
-  buttonDisabled: { opacity: 0.6 },
-  buttonBusy: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-  },
-  buttonText: { color: '#ffffff' },
   results: { gap: Spacing.three },
   scoreRow: { flexDirection: 'row', gap: Spacing.three },
-  score: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.three,
-    gap: Spacing.one,
-  },
-  panel: {
-    padding: Spacing.three,
-    borderRadius: Spacing.three,
-    gap: Spacing.two,
-  },
-  listItem: { flexDirection: 'row', gap: Spacing.two },
-  listItemText: { flex: 1 },
   accountRow: {
     marginTop: Spacing.four,
     alignItems: 'center',

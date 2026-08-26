@@ -98,6 +98,11 @@ legitimately disagree between calls, so the audit explains the existing score
 rather than competing with it. Re-opening an audited resume serves the stored
 audit with no model call; "Run a fresh audit" appends a new one.
 
+**This is the second tool available on mobile**, after the Resume Analyzer —
+see AI Architecture's "The mobile surface". It is also the first mobile screen
+that opens on a list rather than a file picker, since it acts on an analysis
+the user already has.
+
 **Cover Letter Generator** — pick a previously analyzed resume, enter a job
 title, optional company name, and job description, and Gemini writes a cover
 letter grounded in that resume's stored text and its analysis (scores,
@@ -363,6 +368,9 @@ src/app/
   (legal)/                     terms, privacy + shared layout that reuses the
                                landing Navbar/Footer. Placeholder content
   auth/callback/route.ts       Code exchange for emailed links
+  api/mobile/                  Bearer-authenticated endpoints for the Expo app
+    resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
+    ats-checker/route.ts       POST JSON — mirrors auditResume
   dashboard/                   Protected app shell
     layout.tsx                 getUser() guard + sidebar shell
     page.tsx                   Overview (greeting + entry point)
@@ -410,7 +418,10 @@ src/hooks/use-mobile.ts        Generated with the sidebar block — DO NOT EDIT
 
 src/lib/
   supabase/                    client.ts (browser), server.ts (RSC/actions),
-                               middleware.ts (session refresh + guards)
+                               middleware.ts (session refresh + guards),
+                               route-handler.ts (bearer client for api/mobile)
+  api/mobile-route.ts          bearerToken, jsonError, rateLimitStatus —
+                               transport helpers shared by every mobile route
   ai/gemini.ts                 Shared Gemini client, MODEL, requestStructuredJson
   ai/resume-analysis.ts        Prompt + schemas, requestResumeAnalysis
   ai/resume-optimization.ts    Prompt + schemas, requestResumeOptimization
@@ -756,6 +767,35 @@ runtime import. See `lib/ai/cover-letter-schema.ts` for the reference shape,
 and verify a new one the same way it was verified here: after building,
 `grep -rl "GoogleGenAI" .next/static/` must return nothing.
 
+**The mobile surface.** The Expo app in `mobile/` cannot call a Server Action —
+it shares no cookie jar with the deployed origin — so each tool it ships needs
+an `/api/mobile/*` route. **Two of the six tools have one**: Resume Analyzer
+(POST multipart) and ATS Compatibility Check (POST JSON). The other four are
+web-only.
+
+Each route **mirrors its Server Action step for step and reuses the same
+`lib/ai` functions**, rather than reimplementing anything: same validation,
+same RLS-scoped re-fetch, same rate-limit reserve/resolve, same Gemini call,
+same persistence, same user-facing error strings. Note this is function-level
+reuse with sequence-level duplication — a change to a tool's flow has to be
+made in both the action and the route. The route form differs in exactly three
+ways: bearer auth instead of cookies (`lib/supabase/route-handler.ts`), an HTTP
+status alongside each error (`rateLimitStatus`, plus `Retry-After` — which the
+Server Actions discard), and an outer `try/catch` the actions do not have.
+
+Transport helpers common to every mobile route live in
+`lib/api/mobile-route.ts`. They started route-local in the analyzer endpoint and
+moved when the ATS route became the second consumer.
+
+**The app reads `resume_analyses` and `ats_audits` directly from Supabase**
+(`mobile/src/lib/analyses.ts`), rather than through a route. That is deliberate
+and is the one place the app touches a table. The routes exist because AI
+generation needs the server-only `GEMINI_API_KEY`; a plain read of the caller's
+own rows needs no secret, and RLS already scopes it — the same policy the web
+picker depends on. A proxy route would add a server hop to re-permit a read the
+client is already entitled to. Anything needing a secret still goes through a
+route.
+
 **Database.** Five tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
 (both `check between 0 and 100`), `summary`, `strengths`/`weaknesses`/
@@ -1022,6 +1062,20 @@ shell, Resume Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter
 Generator, Career Insights, Interview Preparation, Account Settings (including
 web Delete Account). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
+
+**On mobile, two of the six tools have shipped**: Resume Analyzer and ATS
+Compatibility Check.
+
+**The mobile ATS Check is verified short of an authenticated run.** Both
+projects pass `format`/`lint`/`typecheck`/`build`, the `.next/static/`
+Gemini-bundle check is clean, a production iOS bundle builds and contains the
+screen, and the route's unauthenticated matrix is confirmed by `curl`
+(no header → 401, non-bearer scheme → 401, garbage token → 401, `GET` → 405).
+**Not yet run: any call carrying a real session**, which is what would exercise
+the UUID-validation, not-found, cache-hit, fresh-generation, quota, and
+persistence branches. The `QA_EMAIL`/`QA_PASSWORD` in `.env.local` no longer
+authenticate, and no replacement was created. The signed-in click-through on a
+device is also still pending — that is the step no harness here covers.
 
 **Delete Account is verified only as far as static analysis reaches.** Its
 migration and Server Action are covered by
