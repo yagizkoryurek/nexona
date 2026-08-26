@@ -9,7 +9,9 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.nexona.app"
+      "bundleIdentifier": "com.nexona.app",
+      "supportsTablet": true,
+      "requireFullScreen": true
     },
     "android": {
       "package": "com.nexona.app",
