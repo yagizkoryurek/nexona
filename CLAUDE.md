@@ -120,6 +120,12 @@ job details prefilled; "Choose a different resume" resets fully. No history
 view of past letters yet (see Known Limitations), though the query to list
 them already exists (`listCoverLetters` in `cover-letter-action.ts`).
 
+**This is the fourth tool available on mobile** — see AI Architecture's "The
+mobile surface". It is the only mobile screen with a form: a job has to be
+described, not just selected, so its phase machine has four phases where every
+other mobile tool has three. Like the Optimizer and unlike the ATS Check it has
+no cache, so every generation spends a rate-limit slot.
+
 **The model is instructed never to invent a professional fact.** Every
 employer, title, date, credential, skill, project, or achievement referenced
 must already appear in the resume text; where the job description asks for
@@ -375,7 +381,7 @@ src/app/
                                landing Navbar/Footer. Placeholder content
   auth/callback/route.ts       Code exchange for emailed links
   api/mobile/                  Bearer-authenticated endpoints for the Expo app
-                               (all six exist; the app ships three of them)
+                               (all six exist; the app ships four of them)
     resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
     ats-checker/route.ts       POST JSON — mirrors auditResume
     resume-optimizer/route.ts  POST JSON — mirrors optimizeResume
@@ -782,9 +788,18 @@ and verify a new one the same way it was verified here: after building,
 **The mobile surface.** The Expo app in `mobile/` cannot call a Server Action —
 it shares no cookie jar with the deployed origin — so each tool it ships needs
 an `/api/mobile/*` route. **All six now have one**, but **the app itself ships
-three**: Resume Analyzer (POST multipart), ATS Compatibility Check (POST JSON),
-and Resume Optimizer (POST JSON). The remaining three routes exist ahead of
-their screens; those tools are still web-only in the app.
+four**: Resume Analyzer (POST multipart), ATS Compatibility Check, Resume
+Optimizer, and Cover Letter Generator (all POST JSON). The remaining two routes
+exist ahead of their screens; those tools are still web-only in the app.
+
+Cover Letter is the one route whose body carries more than an analysis id — its
+`job` object nests so the route can compose `coverLetterInputSchema` as-is. The
+mobile client validates the same bounds by hand in
+`mobile/src/lib/cover-letter-validation.ts`, because `zod` is deliberately not
+a mobile dependency (see `mobile/src/lib/auth-validation.ts` for the same call).
+Those bounds must change together with the schema: the route answers anything
+it rejects with one generic message, so a looser client bound surfaces as an
+unexplained failure rather than as a field error.
 
 Each route **mirrors its Server Action step for step and reuses the same
 `lib/ai` functions**, rather than reimplementing anything: same validation,
@@ -1076,32 +1091,80 @@ Generator, Career Insights, Interview Preparation, Account Settings (including
 web Delete Account). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
 
-**On mobile, three of the six tools have shipped**: Resume Analyzer, ATS
-Compatibility Check, and Resume Optimizer.
+**On mobile, four of the six tools have shipped**: Resume Analyzer, ATS
+Compatibility Check, Resume Optimizer, and Cover Letter Generator.
 
-**The mobile ATS Check is verified short of an authenticated run.** Both
-projects pass `format`/`lint`/`typecheck`/`build`, the `.next/static/`
-Gemini-bundle check is clean, a production iOS bundle builds and contains the
-screen, and the route's unauthenticated matrix is confirmed by `curl`
-(no header → 401, non-bearer scheme → 401, garbage token → 401, `GET` → 405).
-**Not yet run: any call carrying a real session**, which is what would exercise
-the UUID-validation, not-found, cache-hit, fresh-generation, quota, and
-persistence branches. The `QA_EMAIL`/`QA_PASSWORD` in `.env.local` no longer
-authenticate, and no replacement was created. The signed-in click-through on a
-device is also still pending — that is the step no harness here covers.
+**The mobile app's navigation is a two-tab bar — Home and Tools — with the
+tools behind a stack**, not a tab per tool. `app/(tabs)/tools/_layout.tsx` is a
+`Stack` nested _inside_ the Tools tab: the tab bar stays visible over a pushed
+tool, `Stack.Protected` in `app/_layout.tsx` keeps guarding the whole `(tabs)`
+group exactly as before, and every tool gets a native header, back button, and
+the iOS swipe-back gesture. Re-tapping Tools pops to the hub, which is
+`NativeTabs`' `disablePopToTop` default rather than app code.
 
-**The mobile Resume Optimizer is verified less than the ATS Check was.** The
-mobile project typechecks (`tsc --noEmit`), the web project still passes
+`components/ui/tool-list.tsx` is the single source of truth for that hub. It is
+a discriminated union on `status`, the same shape as the web's
+`dashboard-nav-items.ts` and for the same reason: a `comingSoon` entry carries
+**no `href` and no `screen` field at all**, so a not-yet-built tool cannot be
+navigated to or registered — a dead route is a compile error, not a runtime
+one. Career Insights and Interview Prep sit there now. Shipping one means
+flipping its entry and adding one screen file under `tools/`; neither
+`_layout.tsx` (which builds its `Stack.Screen` list from `AVAILABLE_TOOLS`) nor
+either `app-tabs` file needs an edit.
+
+One consequence worth knowing before editing a tool screen: **screens under
+`tools/` deliberately omit the `top` safe-area edge and render no in-screen
+title**, because the stack header supplies both. Home, which has no stack,
+keeps both. Re-adding either under `tools/` double-counts it.
+
+**The mobile ATS Check has been exercised signed in.** Both projects pass
+`format`/`lint`/`typecheck`/`build`, the `.next/static/` Gemini-bundle check is
+clean, a production iOS bundle builds and contains the screen, and the route's
+unauthenticated matrix is confirmed by `curl` (no header → 401, non-bearer
+scheme → 401, garbage token → 401, `GET` → 405). The signed-in click-through
+has since been completed manually on **both the iPad Simulator and a physical
+iPhone 15**, against a local `next dev` server.
+
+Be precise about what that covers: it is the path a user walks — pick a resume,
+run the audit, read the result — not a branch-by-branch exercise of the route.
+The quota-rejection and failed-persistence branches have still never been
+observed running. None of it is scripted: the `QA_EMAIL`/`QA_PASSWORD` in
+`.env.local` no longer authenticate and no replacement was created, so every
+signed-in check here is a person tapping through the app.
+
+**The mobile Resume Optimizer has been exercised signed in.** The mobile
+project typechecks (`tsc --noEmit`), the web project passes
 `format`/`lint`/`typecheck`/`test` (38/38), and a production iOS bundle exports
-clean and contains the screen, its route path, its copy, and the
-`wand.and.stars` tab symbol. **Not run: `expo lint`** — the mobile project has
-no ESLint dependency or config at all, so linting it would mean installing one,
-which is its own decision. **Also not run: any authenticated call**, so the
-UUID-validation, not-found, quota, and success branches of
-`/api/mobile/resume-optimizer` remain unexercised, and the signed-in
-click-through on a device is pending. Note that string checks against a Hermes
-bundle need care: strings containing non-ASCII (the `…` in "Generating your
-optimized resume…") are stored UTF-16 and an ASCII `grep` misses them.
+clean and contains the screen, its route path, and its copy. The signed-in
+click-through — pick a resume, generate, read the rewrite — has been completed
+manually on **both the iPad Simulator and a physical iPhone 15**, against a
+local `next dev` server. As with the ATS Check, that is the user's path rather
+than a branch-by-branch exercise; the quota-rejection branch of
+`/api/mobile/resume-optimizer` has never been observed running.
+
+**Still not run: `expo lint`** — the mobile project has no ESLint dependency or
+config at all, so linting it would mean installing one, which is its own
+decision. Note also that string checks against a Hermes bundle need care:
+strings containing non-ASCII (the `…` in "Generating your optimized resume…")
+are stored UTF-16 and an ASCII `grep` misses them.
+
+**The mobile Cover Letter Generator has been exercised signed in.** The mobile
+project typechecks, the web project passes `format`/`lint`/`typecheck`/`test`
+(38/38), and a production iOS bundle contains the screen, its route path, and
+its copy — including the field labels and the validation messages, which are
+assembled from template literals and so appear in the bundle as fragments
+rather than whole strings. Authenticated generation was completed and verified
+on **both the iPad Simulator and a physical iPhone 15**, and the multiline
+job-description field's keyboard behaviour under the stack header was verified
+on the iPad Simulator.
+
+Two things about this route's probes are worth recording, because the obvious
+expectation is wrong. **The route checks the bearer token before it parses the
+body**, so an unauthenticated malformed body answers `401`, not `400` — the two
+`400` branches (`Expected a JSON request body.` and `That request couldn't be
+processed.`) are reachable only with a real session and have never been
+exercised. Confirmed unauthenticated against a local server: valid-shaped
+`POST` → 401, `{}` → 401, non-JSON → 401, `GET` → 405.
 
 **Delete Account is verified only as far as static analysis reaches.** Its
 migration and Server Action are covered by

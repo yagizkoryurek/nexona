@@ -147,13 +147,12 @@ export default function AtsCheckScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled">
           <View style={styles.content}>
-            <ThemedText type="subtitle">ATS Check</ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.subtitle}>
+            <ThemedText themeColor="textSecondary">
               Pick a resume you&apos;ve already analyzed. You&apos;ll get a
               detailed read of how it survives automated screening.
             </ThemedText>
@@ -397,7 +396,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     gap: Spacing.three,
   },
-  subtitle: { marginTop: -Spacing.two },
   pressed: { opacity: 0.85 },
   results: { gap: Spacing.three },
   scoreRow: { flexDirection: 'row', gap: Spacing.three },

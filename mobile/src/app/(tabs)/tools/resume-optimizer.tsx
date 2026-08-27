@@ -111,13 +111,12 @@ export default function ResumeOptimizerScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled">
           <View style={styles.content}>
-            <ThemedText type="subtitle">Optimizer</ThemedText>
-            <ThemedText themeColor="textSecondary" style={styles.subtitle}>
+            <ThemedText themeColor="textSecondary">
               Pick a resume you&apos;ve already analyzed. We&apos;ll generate an
               improved version of it.
             </ThemedText>
@@ -210,6 +209,5 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     gap: Spacing.three,
   },
-  subtitle: { marginTop: -Spacing.two },
   results: { gap: Spacing.three },
 });
