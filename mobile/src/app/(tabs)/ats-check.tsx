@@ -6,6 +6,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FormError } from '@/components/auth/auth-form';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { AnalysisPicker } from '@/components/ui/analysis-picker';
+import { Badge } from '@/components/ui/badge';
 import { ListPanel, Panel, Score } from '@/components/ui/panel';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -129,7 +131,9 @@ export default function AtsCheckScreen() {
     setAnalyses(
       (previous) =>
         previous?.map((analysis) =>
-          analysis.id === analysisId ? { ...analysis, audited: true } : analysis
+          analysis.id === analysisId
+            ? { ...analysis, annotation: 'Audited' }
+            : analysis
         ) ?? previous
     );
 
@@ -169,101 +173,19 @@ export default function AtsCheckScreen() {
                 </ThemedText>
               </Panel>
             ) : (
-              <Picker
+              <AnalysisPicker
                 analyses={analyses}
                 onSelect={(id) => void runAudit(id, false)}
+                actionLabel="Audit"
+                loadingTitle="Loading your resumes…"
+                emptyTitle="Nothing to check yet"
+                emptyMessage="You don't have any analyses eligible for an ATS check yet. Analyze a resume on the Home tab first, then come back here for a detailed compatibility audit."
               />
             )}
           </View>
         </ScrollView>
       </SafeAreaView>
     </ThemedView>
-  );
-}
-
-/**
- * The list of eligible analyses.
- *
- * Eligibility is a stored resume text — see lib/analyses.ts. Analyses that
- * predate that column are absent rather than shown as broken, so the empty
- * state has to explain what to do rather than implying something failed.
- */
-function Picker({
-  analyses,
-  onSelect,
-}: {
-  analyses: SelectableAnalysis[] | null;
-  onSelect: (id: string) => void;
-}) {
-  if (analyses === null) {
-    return (
-      <Panel title="Loading your resumes…">
-        <ThemedText type="small" themeColor="textSecondary">
-          One moment.
-        </ThemedText>
-      </Panel>
-    );
-  }
-
-  if (analyses.length === 0) {
-    return (
-      <Panel title="Nothing to check yet">
-        <ThemedText type="small" themeColor="textSecondary">
-          You don&apos;t have any analyses eligible for an ATS check yet.
-          Analyze a resume on the Home tab first, then come back here for a
-          detailed compatibility audit.
-        </ThemedText>
-      </Panel>
-    );
-  }
-
-  return (
-    <View style={styles.pickerList}>
-      {analyses.map((analysis) => (
-        <AnalysisRow
-          key={analysis.id}
-          analysis={analysis}
-          onPress={() => onSelect(analysis.id)}
-        />
-      ))}
-    </View>
-  );
-}
-
-function AnalysisRow({
-  analysis,
-  onPress,
-}: {
-  analysis: SelectableAnalysis;
-  onPress: () => void;
-}) {
-  const theme = useTheme();
-
-  const date = new Date(analysis.createdAt).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Audit ${analysis.fileName}, analyzed ${date}`}
-      style={({ pressed }) => [
-        styles.row,
-        { backgroundColor: theme.backgroundElement },
-        pressed && styles.pressed,
-      ]}>
-      <View style={styles.rowText}>
-        <ThemedText type="smallBold">{analysis.fileName}</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">
-          {date} · Overall {analysis.overallScore} · ATS {analysis.atsScore}
-        </ThemedText>
-      </View>
-
-      {analysis.audited ? <Badge label="Audited" /> : null}
-    </Pressable>
   );
 }
 
@@ -461,20 +383,6 @@ function ChipPanel({
   );
 }
 
-function Badge({ label, color }: { label: string; color?: string }) {
-  const theme = useTheme();
-
-  return (
-    <View
-      style={[styles.badge, { backgroundColor: theme.backgroundSelected }]}
-      accessibilityRole="text">
-      <ThemedText type="smallBold" style={color ? { color } : undefined}>
-        {label}
-      </ThemedText>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
@@ -491,15 +399,6 @@ const styles = StyleSheet.create({
   },
   subtitle: { marginTop: -Spacing.two },
   pressed: { opacity: 0.85 },
-  pickerList: { gap: Spacing.two },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.three,
-    padding: Spacing.three,
-    borderRadius: Spacing.three,
-  },
-  rowText: { flex: 1, gap: Spacing.one },
   results: { gap: Spacing.three },
   scoreRow: { flexDirection: 'row', gap: Spacing.three },
   entry: { gap: Spacing.one, marginTop: Spacing.two },
@@ -510,12 +409,6 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one,
     paddingHorizontal: Spacing.three,
     borderRadius: Spacing.five,
-  },
-  badge: {
-    alignSelf: 'flex-start',
-    paddingVertical: Spacing.one,
-    paddingHorizontal: Spacing.two,
-    borderRadius: Spacing.two,
   },
   secondary: {
     alignItems: 'center',

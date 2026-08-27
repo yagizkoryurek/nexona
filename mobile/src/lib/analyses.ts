@@ -24,14 +24,18 @@ export type SelectableAnalysis = {
   createdAt: string;
   overallScore: number;
   atsScore: number;
-  /** Whether an ATS audit already exists for this analysis. */
-  audited: boolean;
+  /**
+   * Optional trailing marker, e.g. "Audited". Lets a tool surface per-row state
+   * without the picker having to know what that state means — the same shape as
+   * the web `SelectableAnalysis`'s `annotation`.
+   */
+  annotation?: string;
 };
 
 const GENERIC_ERROR = "We couldn't load your resumes. Please try again.";
 
 /**
- * Lists analyses eligible for an ATS check, newest first.
+ * The eligible-analysis query every tool shares, newest first.
  *
  * Eligibility is a stored `resume_text`. Analyses created before that column
  * existed have none and are simply absent — not shown as errors, since there is
@@ -40,9 +44,7 @@ const GENERIC_ERROR = "We couldn't load your resumes. Please try again.";
  * `resume_text` is filtered on but never selected: it is the largest column by
  * far and nothing on this side has a use for it.
  */
-export async function listAuditableAnalyses(): Promise<
-  ApiResult<SelectableAnalysis[]>
-> {
+async function listEligibleAnalyses(): Promise<ApiResult<SelectableAnalysis[]>> {
   try {
     const { data, error } = await supabase
       .from('resume_analyses')
@@ -55,22 +57,6 @@ export async function listAuditableAnalyses(): Promise<
       return { error: GENERIC_ERROR };
     }
 
-    // A separate query rather than a PostgREST embed: this only needs a set of
-    // ids, and stays predictable without depending on relationship detection.
-    // A failure here is not fatal — the list is still usable without the
-    // "Audited" marker, so it degrades to unannotated rather than to an error.
-    const { data: auditRows, error: auditError } = await supabase
-      .from('ats_audits')
-      .select('analysis_id');
-
-    if (auditError) {
-      console.error('Failed to read audited analysis ids:', auditError);
-    }
-
-    const auditedIds = new Set(
-      (auditRows ?? []).map((row) => row.analysis_id as string)
-    );
-
     return {
       data: (data ?? []).map((row) => ({
         id: row.id as string,
@@ -78,7 +64,6 @@ export async function listAuditableAnalyses(): Promise<
         createdAt: row.created_at as string,
         overallScore: row.overall_score as number,
         atsScore: row.ats_score as number,
-        audited: auditedIds.has(row.id as string),
       })),
     };
   } catch {
@@ -86,5 +71,62 @@ export async function listAuditableAnalyses(): Promise<
     return {
       error: "We couldn't reach Nexona. Check your connection and try again.",
     };
+  }
+}
+
+/**
+ * Lists analyses eligible for an ATS check, annotated with whether one already
+ * exists — the marker that tells a user re-opening a resume is free.
+ */
+export async function listAuditableAnalyses(): Promise<
+  ApiResult<SelectableAnalysis[]>
+> {
+  const result = await listEligibleAnalyses();
+  if ('error' in result) return result;
+
+  const auditedIds = await listAuditedAnalysisIds();
+
+  return {
+    data: result.data.map((analysis) =>
+      auditedIds.has(analysis.id)
+        ? { ...analysis, annotation: 'Audited' }
+        : analysis
+    ),
+  };
+}
+
+/**
+ * Lists analyses eligible for optimization.
+ *
+ * No annotation, and deliberately no second query: the Optimizer stores
+ * nothing, so there is no prior result for a row to be marked with. Every run
+ * is a fresh generation — see lib/resume-optimization.ts.
+ */
+export async function listOptimizableAnalyses(): Promise<
+  ApiResult<SelectableAnalysis[]>
+> {
+  return listEligibleAnalyses();
+}
+
+/**
+ * A separate query rather than a PostgREST embed: this only needs a set of ids,
+ * and stays predictable without depending on relationship detection. A failure
+ * here is not fatal — the list is still usable without the "Audited" marker, so
+ * it degrades to unannotated rather than to an error.
+ */
+async function listAuditedAnalysisIds(): Promise<Set<string>> {
+  try {
+    const { data, error } = await supabase
+      .from('ats_audits')
+      .select('analysis_id');
+
+    if (error) {
+      console.error('Failed to read audited analysis ids:', error);
+      return new Set();
+    }
+
+    return new Set((data ?? []).map((row) => row.analysis_id as string));
+  } catch {
+    return new Set();
   }
 }

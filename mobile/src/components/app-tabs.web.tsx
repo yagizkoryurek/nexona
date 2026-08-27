@@ -27,6 +27,9 @@ export default function AppTabs() {
           <TabTrigger name="ats-check" href="/ats-check" asChild>
             <TabButton>ATS Check</TabButton>
           </TabTrigger>
+          <TabTrigger name="resume-optimizer" href="/resume-optimizer" asChild>
+            <TabButton>Optimizer</TabButton>
+          </TabTrigger>
         </CustomTabList>
       </TabList>
     </Tabs>

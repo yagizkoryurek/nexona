@@ -84,6 +84,12 @@ structure. Result is displayed, not persisted. Deliberately minimal by design �
 chat, or multiple optimization modes. Only analyses that have a stored
 `resume_text` are selectable — see Persistence.
 
+**This is the third tool available on mobile**, after the Resume Analyzer and
+the ATS Compatibility Check — see AI Architecture's "The mobile surface". It is
+the first mobile tool with no stored result behind it, so unlike the ATS Check
+there is no free re-open: every run is a fresh generation and spends a
+rate-limit slot.
+
 **ATS Compatibility Check** — pick a previously analyzed resume and Gemini
 produces a detailed, **qualitative** ATS audit of it: an executive summary,
 four status-graded sections (formatting, section structure, keywords,
@@ -369,8 +375,14 @@ src/app/
                                landing Navbar/Footer. Placeholder content
   auth/callback/route.ts       Code exchange for emailed links
   api/mobile/                  Bearer-authenticated endpoints for the Expo app
+                               (all six exist; the app ships three of them)
     resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
     ats-checker/route.ts       POST JSON — mirrors auditResume
+    resume-optimizer/route.ts  POST JSON — mirrors optimizeResume
+    cover-letter/route.ts      POST JSON — mirrors generateCoverLetter
+    career-insights/route.ts   POST JSON — mirrors generateCareerInsights
+    interview-prep/route.ts    POST JSON — mirrors generateInterviewPrep
+    mobile-routes.test.ts      Static assertions over all six route sources
   dashboard/                   Protected app shell
     layout.tsx                 getUser() guard + sidebar shell
     page.tsx                   Overview (greeting + entry point)
@@ -769,9 +781,10 @@ and verify a new one the same way it was verified here: after building,
 
 **The mobile surface.** The Expo app in `mobile/` cannot call a Server Action —
 it shares no cookie jar with the deployed origin — so each tool it ships needs
-an `/api/mobile/*` route. **Two of the six tools have one**: Resume Analyzer
-(POST multipart) and ATS Compatibility Check (POST JSON). The other four are
-web-only.
+an `/api/mobile/*` route. **All six now have one**, but **the app itself ships
+three**: Resume Analyzer (POST multipart), ATS Compatibility Check (POST JSON),
+and Resume Optimizer (POST JSON). The remaining three routes exist ahead of
+their screens; those tools are still web-only in the app.
 
 Each route **mirrors its Server Action step for step and reuses the same
 `lib/ai` functions**, rather than reimplementing anything: same validation,
@@ -1063,8 +1076,8 @@ Generator, Career Insights, Interview Preparation, Account Settings (including
 web Delete Account). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
 
-**On mobile, two of the six tools have shipped**: Resume Analyzer and ATS
-Compatibility Check.
+**On mobile, three of the six tools have shipped**: Resume Analyzer, ATS
+Compatibility Check, and Resume Optimizer.
 
 **The mobile ATS Check is verified short of an authenticated run.** Both
 projects pass `format`/`lint`/`typecheck`/`build`, the `.next/static/`
@@ -1076,6 +1089,19 @@ the UUID-validation, not-found, cache-hit, fresh-generation, quota, and
 persistence branches. The `QA_EMAIL`/`QA_PASSWORD` in `.env.local` no longer
 authenticate, and no replacement was created. The signed-in click-through on a
 device is also still pending — that is the step no harness here covers.
+
+**The mobile Resume Optimizer is verified less than the ATS Check was.** The
+mobile project typechecks (`tsc --noEmit`), the web project still passes
+`format`/`lint`/`typecheck`/`test` (38/38), and a production iOS bundle exports
+clean and contains the screen, its route path, its copy, and the
+`wand.and.stars` tab symbol. **Not run: `expo lint`** — the mobile project has
+no ESLint dependency or config at all, so linting it would mean installing one,
+which is its own decision. **Also not run: any authenticated call**, so the
+UUID-validation, not-found, quota, and success branches of
+`/api/mobile/resume-optimizer` remain unexercised, and the signed-in
+click-through on a device is pending. Note that string checks against a Hermes
+bundle need care: strings containing non-ASCII (the `…` in "Generating your
+optimized resume…") are stored UTF-16 and an ASCII `grep` misses them.
 
 **Delete Account is verified only as far as static analysis reaches.** Its
 migration and Server Action are covered by

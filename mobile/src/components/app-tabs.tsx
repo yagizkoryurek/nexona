@@ -27,6 +27,17 @@ export default function AppTabs() {
           renderingMode="template"
         />
       </NativeTabs.Trigger>
+
+      {/*
+        An SF Symbol rather than a bundled PNG like its two siblings: there is
+        no third icon asset, and this needs no binary file. The tradeoff is that
+        `sf` is iOS-only — on Android this trigger shows its label with no icon
+        until a `drawable` is added alongside it.
+      */}
+      <NativeTabs.Trigger name="resume-optimizer">
+        <NativeTabs.Trigger.Label>Optimizer</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon sf="wand.and.stars" />
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
