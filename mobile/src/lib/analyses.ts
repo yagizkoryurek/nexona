@@ -84,12 +84,38 @@ export async function listAuditableAnalyses(): Promise<
   const result = await listEligibleAnalyses();
   if ('error' in result) return result;
 
-  const auditedIds = await listAuditedAnalysisIds();
+  const auditedIds = await listAnnotatedAnalysisIds('ats_audits');
 
   return {
     data: result.data.map((analysis) =>
       auditedIds.has(analysis.id)
         ? { ...analysis, annotation: 'Audited' }
+        : analysis
+    ),
+  };
+}
+
+/**
+ * Lists analyses eligible for career insights, annotated with whether a set
+ * already exists — the marker that tells a user re-opening a resume is free.
+ *
+ * Same shape as the ATS check's listing rather than the Optimizer's, because
+ * Career Insights persists: insights for a resume converge on one answer, so
+ * the newest supersedes the older and re-opening serves the stored set with no
+ * model call.
+ */
+export async function listInsightfulAnalyses(): Promise<
+  ApiResult<SelectableAnalysis[]>
+> {
+  const result = await listEligibleAnalyses();
+  if ('error' in result) return result;
+
+  const insightfulIds = await listAnnotatedAnalysisIds('career_insights');
+
+  return {
+    data: result.data.map((analysis) =>
+      insightfulIds.has(analysis.id)
+        ? { ...analysis, annotation: 'Insights ready' }
         : analysis
     ),
   };
@@ -109,19 +135,27 @@ export async function listOptimizableAnalyses(): Promise<
 }
 
 /**
+ * Which analyses already have a derived document in `table`.
+ *
  * A separate query rather than a PostgREST embed: this only needs a set of ids,
  * and stays predictable without depending on relationship detection. A failure
- * here is not fatal — the list is still usable without the "Audited" marker, so
- * it degrades to unannotated rather than to an error.
+ * here is not fatal — the list is still usable without its marker, so it
+ * degrades to unannotated rather than to an error.
+ *
+ * Parameterized by table because `ats_audits` and `career_insights` share an
+ * identical shape on the web side — one jsonb document keyed by `analysis_id`,
+ * with the same RLS policies — so the only thing that differs here is the name.
+ * The union keeps it to the tables that actually have that shape rather than
+ * accepting any string.
  */
-async function listAuditedAnalysisIds(): Promise<Set<string>> {
+async function listAnnotatedAnalysisIds(
+  table: 'ats_audits' | 'career_insights'
+): Promise<Set<string>> {
   try {
-    const { data, error } = await supabase
-      .from('ats_audits')
-      .select('analysis_id');
+    const { data, error } = await supabase.from(table).select('analysis_id');
 
     if (error) {
-      console.error('Failed to read audited analysis ids:', error);
+      console.error(`Failed to read analysis ids from ${table}:`, error);
       return new Set();
     }
 

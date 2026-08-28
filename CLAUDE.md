@@ -146,6 +146,13 @@ the same stored-result caching and append-only shape as the ATS Check, not the
 Cover Letter Generator's always-a-new-row model, because insights for a resume
 converge on one answer rather than varying per job.
 
+**This is the fifth tool available on mobile** — see AI Architecture's "The
+mobile surface". It is the second cached mobile tool after the ATS Check, so
+re-opening an already-generated resume is free there too, and the picker marks
+those rows "Insights ready". Unlike every other mobile tool it renders **no
+number at all**: the ATS Check still shows the stored ATS score it explains,
+while this one is never sent either score to begin with.
+
 **The stored `overall_score` and `ats_score` are passed to the model as
 read-only context, never as this tool's subject.** They inform the model's
 reasoning about the resume's history, but the prompt explicitly forbids
@@ -381,7 +388,7 @@ src/app/
                                landing Navbar/Footer. Placeholder content
   auth/callback/route.ts       Code exchange for emailed links
   api/mobile/                  Bearer-authenticated endpoints for the Expo app
-                               (all six exist; the app ships four of them)
+                               (all six exist; the app ships five of them)
     resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
     ats-checker/route.ts       POST JSON — mirrors auditResume
     resume-optimizer/route.ts  POST JSON — mirrors optimizeResume
@@ -788,9 +795,10 @@ and verify a new one the same way it was verified here: after building,
 **The mobile surface.** The Expo app in `mobile/` cannot call a Server Action —
 it shares no cookie jar with the deployed origin — so each tool it ships needs
 an `/api/mobile/*` route. **All six now have one**, but **the app itself ships
-four**: Resume Analyzer (POST multipart), ATS Compatibility Check, Resume
-Optimizer, and Cover Letter Generator (all POST JSON). The remaining two routes
-exist ahead of their screens; those tools are still web-only in the app.
+five**: Resume Analyzer (POST multipart), ATS Compatibility Check, Resume
+Optimizer, Cover Letter Generator, and Career Insights (all POST JSON). Only
+Interview Preparation's route still exists ahead of its screen; that tool is
+still web-only in the app.
 
 Cover Letter is the one route whose body carries more than an analysis id — its
 `job` object nests so the route can compose `coverLetterInputSchema` as-is. The
@@ -815,14 +823,20 @@ Transport helpers common to every mobile route live in
 `lib/api/mobile-route.ts`. They started route-local in the analyzer endpoint and
 moved when the ATS route became the second consumer.
 
-**The app reads `resume_analyses` and `ats_audits` directly from Supabase**
-(`mobile/src/lib/analyses.ts`), rather than through a route. That is deliberate
-and is the one place the app touches a table. The routes exist because AI
-generation needs the server-only `GEMINI_API_KEY`; a plain read of the caller's
-own rows needs no secret, and RLS already scopes it — the same policy the web
-picker depends on. A proxy route would add a server hop to re-permit a read the
-client is already entitled to. Anything needing a secret still goes through a
-route.
+**The app reads `resume_analyses`, `ats_audits`, and `career_insights` directly
+from Supabase** (`mobile/src/lib/analyses.ts`), rather than through a route.
+That is deliberate and is the one place the app touches a table. The routes
+exist because AI generation needs the server-only `GEMINI_API_KEY`; a plain
+read of the caller's own rows needs no secret, and RLS already scopes it — the
+same policy the web picker depends on. A proxy route would add a server hop to
+re-permit a read the client is already entitled to. Anything needing a secret
+still goes through a route.
+
+The two derived-document reads share one table-parameterized helper, since
+`ats_audits` and `career_insights` have an identical shape and the only thing
+that differs is the name — a picker annotation needs nothing but the set of
+`analysis_id`s, and a failed read degrades to an unannotated list rather than
+to an error.
 
 **Database.** Five tables. `public.resume_analyses` — `id`, `user_id` (FK to
 `auth.users`, `on delete cascade`), `file_name`, `overall_score`, `ats_score`
@@ -1091,8 +1105,9 @@ Generator, Career Insights, Interview Preparation, Account Settings (including
 web Delete Account). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
 
-**On mobile, four of the six tools have shipped**: Resume Analyzer, ATS
-Compatibility Check, Resume Optimizer, and Cover Letter Generator.
+**On mobile, five of the six tools have shipped**: Resume Analyzer, ATS
+Compatibility Check, Resume Optimizer, Cover Letter Generator, and Career
+Insights.
 
 **The mobile app's navigation is a two-tab bar — Home and Tools — with the
 tools behind a stack**, not a tab per tool. `app/(tabs)/tools/_layout.tsx` is a
@@ -1107,7 +1122,7 @@ a discriminated union on `status`, the same shape as the web's
 `dashboard-nav-items.ts` and for the same reason: a `comingSoon` entry carries
 **no `href` and no `screen` field at all**, so a not-yet-built tool cannot be
 navigated to or registered — a dead route is a compile error, not a runtime
-one. Career Insights and Interview Prep sit there now. Shipping one means
+one. Interview Prep is the only entry left there. Shipping one means
 flipping its entry and adding one screen file under `tools/`; neither
 `_layout.tsx` (which builds its `Stack.Screen` list from `AVAILABLE_TOOLS`) nor
 either `app-tabs` file needs an edit.
@@ -1165,6 +1180,34 @@ body**, so an unauthenticated malformed body answers `401`, not `400` — the tw
 processed.`) are reachable only with a real session and have never been
 exercised. Confirmed unauthenticated against a local server: valid-shaped
 `POST` → 401, `{}` → 401, non-JSON → 401, `GET` → 405.
+
+**The mobile Career Insights screen has been exercised signed in on the iPad
+Simulator.** The mobile project typechecks (`tsc --noEmit`, after regenerating
+`.expo/types`), the web project passes `format:check`/`lint`/`typecheck`/`test`
+(38/38), and a production iOS bundle exports clean and contains the screen, its
+route path, its API path, the `career_insights` table name, the "Insights
+ready" annotation, every fit/impact/priority badge label, and the empty-
+`skillGaps` copy — that last one and the loading copy only as **UTF-16**, since
+both contain a non-ASCII character and an ASCII `grep` misses them. The route's
+unauthenticated matrix was confirmed by `curl` against a local server: no header
+→ 401, non-bearer scheme → 401, garbage token → 401, `{}` → 401, non-JSON → 401,
+`GET` → 405 — the same bearer-before-body ordering as the Cover Letter route
+above, so its two `400` branches are likewise unexercised.
+
+Because this round changed `mobile/src/lib/analyses.ts`, which all three
+list-driven tools share, the **ATS Check and Resume Optimizer were re-checked
+signed in on the iPad Simulator** in the same sitting and both still work.
+
+Be precise about what that covers, because it is narrower than the records
+above. It is **iPad Simulator only — the physical iPhone 15 was not tested for
+Career Insights in this round**, unlike the ATS Check, Optimizer, and Cover
+Letter, each of which was exercised on both. It is the path a user walks, not a
+branch-by-branch exercise: the empty-`skillGaps` result, the empty-picker state,
+and the quota-rejection branch of `/api/mobile/career-insights` have **not** been
+observed running. What was confirmed is that generation works end to end; the
+stored-insights cache hit and "Generate again" were not separately verified,
+so the free-re-open path this tool shares with the ATS Check remains untested
+on mobile.
 
 **Delete Account is verified only as far as static analysis reaches.** Its
 migration and Server Action are covered by

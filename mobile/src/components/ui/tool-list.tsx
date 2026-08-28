@@ -62,7 +62,9 @@ export const TOOLS = [
     id: 'career-insights',
     name: 'Career Insights',
     description: 'Where your profile stands, the roles it supports, and what is holding it back.',
-    status: 'comingSoon',
+    status: 'available',
+    screen: 'career-insights',
+    href: '/tools/career-insights',
   },
   {
     id: 'interview-prep',
