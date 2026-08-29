@@ -70,7 +70,9 @@ export const TOOLS = [
     id: 'interview-prep',
     name: 'Interview Prep',
     description: 'The questions your resume invites, and how to answer them.',
-    status: 'comingSoon',
+    status: 'available',
+    screen: 'interview-prep',
+    href: '/tools/interview-prep',
   },
 ] as const;
 

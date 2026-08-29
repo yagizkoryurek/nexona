@@ -122,6 +122,28 @@ export async function listInsightfulAnalyses(): Promise<
 }
 
 /**
+ * Lists analyses eligible for interview preparation, annotated with whether a
+ * set already exists — the marker that tells a user re-opening a resume is
+ * free.
+ */
+export async function listPreparableAnalyses(): Promise<
+  ApiResult<SelectableAnalysis[]>
+> {
+  const result = await listEligibleAnalyses();
+  if ('error' in result) return result;
+
+  const preparedIds = await listAnnotatedAnalysisIds('interview_preps');
+
+  return {
+    data: result.data.map((analysis) =>
+      preparedIds.has(analysis.id)
+        ? { ...analysis, annotation: 'Prep ready' }
+        : analysis
+    ),
+  };
+}
+
+/**
  * Lists analyses eligible for optimization.
  *
  * No annotation, and deliberately no second query: the Optimizer stores
@@ -142,14 +164,14 @@ export async function listOptimizableAnalyses(): Promise<
  * here is not fatal — the list is still usable without its marker, so it
  * degrades to unannotated rather than to an error.
  *
- * Parameterized by table because `ats_audits` and `career_insights` share an
- * identical shape on the web side — one jsonb document keyed by `analysis_id`,
- * with the same RLS policies — so the only thing that differs here is the name.
- * The union keeps it to the tables that actually have that shape rather than
- * accepting any string.
+ * Parameterized by table because `ats_audits`, `career_insights`, and
+ * `interview_preps` share an identical shape on the web side — one jsonb
+ * document keyed by `analysis_id`, with the same RLS policies — so the only
+ * thing that differs here is the name. The union keeps it to the tables that
+ * actually have that shape rather than accepting any string.
  */
 async function listAnnotatedAnalysisIds(
-  table: 'ats_audits' | 'career_insights'
+  table: 'ats_audits' | 'career_insights' | 'interview_preps'
 ): Promise<Set<string>> {
   try {
     const { data, error } = await supabase.from(table).select('analysis_id');

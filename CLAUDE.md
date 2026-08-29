@@ -209,6 +209,17 @@ no arithmetic path back to stated résumé content: scores, ratings, percentages
 of "fit" or "readiness", salary figures, and market or demand statistics. The
 distinction is computability from the source, not the presence of a digit.
 
+**This is the sixth and last tool available on mobile**, bringing the app to
+parity with the web toolkit — see AI Architecture's "The mobile surface". It is
+the third cached mobile tool, so re-opening a prepared resume is free there too
+and the picker marks those rows "Prep ready". It is also the only mobile screen
+with a **collapsible**: six to twelve questions each carrying a rationale and
+guidance is far more text than any other mobile result, and the app has no
+accordion primitive, so `tools/interview-prep.tsx` rebuilds the behaviour
+locally with a `Pressable` and React Native's `LayoutAnimation` — no dependency,
+and kept local because there is exactly one consumer. Like Career Insights it
+renders **no number at all**.
+
 **Account Settings** — `/dashboard/settings`, reached from a link in the
 sidebar footer beside Sign Out rather than from `dashboardNavItems`, which
 stays a list of Overview plus the six AI tools. Four sections: account
@@ -388,7 +399,7 @@ src/app/
                                landing Navbar/Footer. Placeholder content
   auth/callback/route.ts       Code exchange for emailed links
   api/mobile/                  Bearer-authenticated endpoints for the Expo app
-                               (all six exist; the app ships five of them)
+                               (all six exist; the app ships all six)
     resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
     ats-checker/route.ts       POST JSON — mirrors auditResume
     resume-optimizer/route.ts  POST JSON — mirrors optimizeResume
@@ -794,11 +805,10 @@ and verify a new one the same way it was verified here: after building,
 
 **The mobile surface.** The Expo app in `mobile/` cannot call a Server Action —
 it shares no cookie jar with the deployed origin — so each tool it ships needs
-an `/api/mobile/*` route. **All six now have one**, but **the app itself ships
-five**: Resume Analyzer (POST multipart), ATS Compatibility Check, Resume
-Optimizer, Cover Letter Generator, and Career Insights (all POST JSON). Only
-Interview Preparation's route still exists ahead of its screen; that tool is
-still web-only in the app.
+an `/api/mobile/*` route. **All six now have one, and the app ships all six**:
+Resume Analyzer (POST multipart), ATS Compatibility Check, Resume Optimizer,
+Cover Letter Generator, Career Insights, and Interview Preparation (all POST
+JSON). No route now exists ahead of its screen, and no tool is web-only.
 
 Cover Letter is the one route whose body carries more than an analysis id — its
 `job` object nests so the route can compose `coverLetterInputSchema` as-is. The
@@ -1105,9 +1115,10 @@ Generator, Career Insights, Interview Preparation, Account Settings (including
 web Delete Account). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
 
-**On mobile, five of the six tools have shipped**: Resume Analyzer, ATS
-Compatibility Check, Resume Optimizer, Cover Letter Generator, and Career
-Insights.
+**All six tools have now shipped on mobile**: Resume Analyzer, ATS
+Compatibility Check, Resume Optimizer, Cover Letter Generator, Career Insights,
+and Interview Preparation. The app is at parity with the web dashboard's
+toolkit.
 
 **The mobile app's navigation is a two-tab bar — Home and Tools — with the
 tools behind a stack**, not a tab per tool. `app/(tabs)/tools/_layout.tsx` is a
@@ -1122,10 +1133,13 @@ a discriminated union on `status`, the same shape as the web's
 `dashboard-nav-items.ts` and for the same reason: a `comingSoon` entry carries
 **no `href` and no `screen` field at all**, so a not-yet-built tool cannot be
 navigated to or registered — a dead route is a compile error, not a runtime
-one. Interview Prep is the only entry left there. Shipping one means
-flipping its entry and adding one screen file under `tools/`; neither
-`_layout.tsx` (which builds its `Stack.Screen` list from `AVAILABLE_TOOLS`) nor
-either `app-tabs` file needs an edit.
+one. **No `comingSoon` entry is left** — shipping Interview Prep emptied that
+group, the mobile mirror of what shipping Career Insights did to the web
+sidebar. Adding a seventh tool means one entry here plus one screen file under
+`tools/`; neither `_layout.tsx` (which builds its `Stack.Screen` list from
+`AVAILABLE_TOOLS`) nor either `app-tabs` file needs an edit. Note `ToolRow`
+renders its "Soon" `Badge` per row rather than from a group, so an empty
+`comingSoon` set needs no special case.
 
 One consequence worth knowing before editing a tool screen: **screens under
 `tools/` deliberately omit the `top` safe-area edge and render no in-screen
@@ -1208,6 +1222,44 @@ observed running. What was confirmed is that generation works end to end; the
 stored-insights cache hit and "Generate again" were not separately verified,
 so the free-re-open path this tool shares with the ATS Check remains untested
 on mobile.
+
+**The mobile Interview Preparation screen has been exercised signed in on the
+iPad Simulator.** The mobile project typechecks (`tsc --noEmit`, after
+regenerating `.expo/types`), the web project passes
+`format:check`/`lint`/`typecheck`/`test` (38/38), and a production iOS bundle
+exports clean and contains the screen, its route path, its API path, the
+`interview_preps` table name, the "Prep ready" annotation, every category and
+priority badge label, both collapsible section labels, and the empty-state copy
+— with the loading copy and the two chevron glyphs only as **UTF-16**, since
+each contains a non-ASCII character and an ASCII `grep` misses them. The
+route's unauthenticated matrix was confirmed by `curl` against a local server:
+no header → 401, non-bearer scheme → 401, garbage token → 401, `{}` → 401,
+non-JSON → 401, `GET` → 405 — the same bearer-before-body ordering as the Cover
+Letter and Career Insights routes, so its two `400` branches are likewise
+unexercised.
+
+**The collapsible was the point of this pass, and it holds.** Resume selection,
+first generation, and the results view all worked; multiple question cards were
+expanded and collapsed, **including one mid-list**, and `LayoutAnimation`
+behaved correctly inside the `ScrollView` — no jumping, stuttering, or
+unexpected layout movement, and no visual overflow or unexpected rendering.
+That is the one thing static checks could never have told us: the question card
+is the first animated interaction in the app and the only mobile component not
+built from an existing primitive. Backing out and re-opening the same resume
+returned the stored preparation with no error and the "Prep ready" marker
+present, and "Generate again" started a fresh generation.
+
+Because this round changed `mobile/src/lib/analyses.ts`, which all four
+list-driven tools share, the **ATS Check, Resume Optimizer, and Career Insights
+were re-checked signed in on the iPad Simulator** in the same sitting and all
+three still work.
+
+Be precise about what that covers. It is **iPad Simulator only — the physical
+iPhone 15 was not tested for Interview Preparation**, which remains outstanding;
+the ATS Check, Optimizer, and Cover Letter each have a record on both. It is
+the path a user walks, not a branch-by-branch exercise: the empty-picker state
+and the quota-rejection branch of `/api/mobile/interview-prep` have **not** been
+observed running, and no error-copy path has been exercised on this screen.
 
 **Delete Account is verified only as far as static analysis reaches.** Its
 migration and Server Action are covered by
