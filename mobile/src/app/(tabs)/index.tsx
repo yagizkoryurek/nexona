@@ -58,13 +58,29 @@ export default function HomeScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 Signed in as {session?.user.email ?? 'unknown'}
               </ThemedText>
-              <Pressable
-                onPress={signOut}
-                accessibilityRole="button"
-                accessibilityLabel="Sign out"
-                style={({ pressed }) => [pressed && styles.pressed]}>
-                <ThemedText type="linkPrimary">Sign out</ThemedText>
-              </Pressable>
+
+              {/*
+                Settings and Sign out sit together, mirroring the web sidebar
+                footer — which also keeps them as a pair rather than listing
+                Settings among the tools.
+              */}
+              <View style={styles.accountActions}>
+                <Pressable
+                  onPress={() => router.push('/settings')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open account settings"
+                  style={({ pressed }) => [pressed && styles.pressed]}>
+                  <ThemedText type="linkPrimary">Settings</ThemedText>
+                </Pressable>
+
+                <Pressable
+                  onPress={signOut}
+                  accessibilityRole="button"
+                  accessibilityLabel="Sign out"
+                  style={({ pressed }) => [pressed && styles.pressed]}>
+                  <ThemedText type="linkPrimary">Sign out</ThemedText>
+                </Pressable>
+              </View>
             </View>
           </View>
         </ScrollView>
@@ -89,6 +105,11 @@ const styles = StyleSheet.create({
   },
   subtitle: { marginTop: -Spacing.two },
   pressed: { opacity: 0.85 },
+  accountActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.four,
+  },
   accountRow: {
     marginTop: Spacing.four,
     alignItems: 'center',

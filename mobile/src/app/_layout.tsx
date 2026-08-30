@@ -59,6 +59,29 @@ function RootNavigator() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Protected guard={!loading && Boolean(session)}>
         <Stack.Screen name="(tabs)" />
+
+        {/*
+          Settings sits beside the tab group rather than inside it: `AppTabs` is
+          NativeTabs, which expects a trigger per route in its group, so a route
+          under `(tabs)` would mean a third tab or a hidden trigger. Here it
+          pushes over the tab bar with a native header, and stays behind the
+          same guard as everything else signed-in.
+
+          `headerBackButtonDisplayMode: 'minimal'` renders the chevron alone.
+          Without it iOS labels the back button with the previous route's title,
+          and the screen behind this one is the `(tabs)` group — which has no
+          title, so the label falls back to the raw route name and reads
+          "(tabs)". The tools stack sets the same option on every tool screen
+          for the same reason, so this also keeps the two headers consistent.
+        */}
+        <Stack.Screen
+          name="settings"
+          options={{
+            headerShown: true,
+            title: 'Settings',
+            headerBackButtonDisplayMode: 'minimal',
+          }}
+        />
       </Stack.Protected>
 
       <Stack.Protected guard={!loading && !session}>

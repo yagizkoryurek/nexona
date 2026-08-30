@@ -22,6 +22,12 @@ import { useTheme } from '@/hooks/use-theme';
  * five forms in the app so far, and the web app's own convention (see
  * CoverLetterJobForm) is to keep a form local until a second consumer justifies
  * generalising it.
+ *
+ * `AuthField`, `FormError` and `AuthLink` now have a second consumer outside
+ * this group — the Settings cards, which run the same OTP password flow while
+ * signed in and need the same labelled input and error treatment. They stay
+ * here rather than moving to `components/ui/`: the auth screens are still the
+ * primary consumer, and Settings' password flow is the same flow.
  */
 
 /** Screen shell: keyboard handling, scrolling, heading, and a form-level error. */

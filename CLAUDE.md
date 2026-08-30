@@ -36,7 +36,7 @@ career changers — anyone who is applying and not hearing back.
 | Animation       | `tw-animate-css` (no animation library)                            |
 | Tooling         | ESLint 9 flat config, Prettier 3 + `prettier-plugin-tailwindcss`   |
 | Package manager | pnpm 11.17.0                                                       |
-| Deploy target   | Vercel (not yet deployed — no `vercel.json`/`.vercel` in repo)     |
+| Deploy target   | Vercel — live at `https://nexona-nine.vercel.app`                  |
 
 Why some of these: `unpdf` over `pdf-parse`/raw pdfjs because it inlines the
 PDF.js worker — a separate `pdf.worker.mjs` cannot resolve inside a Vercel
@@ -242,9 +242,56 @@ the session and redirects to `/sign-in?notice=account-deleted`, a new entry in
 the `NOTICES` map that `sign-in-form.tsx` already used for cross-flow handoffs.
 
 Deletion runs entirely through `public.delete_account()` (migration `0009`) —
-see Database. **Web only; the mobile app has no deletion UI yet**, which is a
-store-policy gap once the app ships (both Apple and Google require in-app
-account deletion for apps that support account creation).
+see Database. **Both clients now have a deletion UI**; the mobile one calls the
+same RPC directly (see "Account Settings on mobile" below), which closes the
+store-policy gap — both Apple and Google require in-app account deletion for
+apps that support account creation.
+
+**Account Settings on mobile** — `mobile/src/app/settings.tsx`, pushed from
+Home's account row rather than given a tab, with the same five sections as the
+web page: account information, security, privacy and legal, and a Danger Zone.
+All four information fields are read-only, same as the web and for the same
+reason.
+
+It is a **root-level route registered inside the existing `Stack.Protected`** in
+`app/_layout.tsx`, not a route under `(tabs)`. `AppTabs` is `NativeTabs`, which
+expects a trigger per route in its group, so a file under `(tabs)` would mean a
+third tab or a hidden trigger; at the root it pushes over the tab bar with a
+native header and back button, exactly like a tool screen. Both guard
+_conditions_ are unchanged — only a `Stack.Screen` was added inside the block
+that already existed. Home and Tools remain the only tabs and `app-tabs.tsx` was
+not touched.
+
+**The password flow diverges from the web's, and has to.** The web emails a
+_link_; mobile completes both email flows with an OTP _code_, and its `(auth)`
+group is guarded by `!session`, so a signed-in user cannot navigate to
+`/forgot-password`, `/verify` or `/reset-password` at all. This is the mobile
+analogue of the web's `AUTH_ONLY_PATHS` problem, and Settings solves it the same
+way the web card does — by calling the actions directly rather than linking to
+the page. `ChangePasswordCard` runs the whole thing in place across three phases
+(`idle → code → password`), calling the same `requestPasswordReset`,
+`verifyPasswordReset` and `updatePassword` the `(auth)` screens call, so the two
+paths cannot drift. There is deliberately **no success screen**: `updatePassword`
+signs out, which flips the root guard and unmounts Settings with the rest of the
+signed-in area, so the user simply arrives at sign-in — hence the warning line
+shown _before_ they submit, and no `router` call anywhere in that file.
+
+**Deletion lives in `mobile/src/lib/account.ts`, not in `AuthContext`.** Every
+method on that context maps to `supabase.auth.*`; this is a Postgres RPC, and
+`lib/analyses.ts` is the established home for talking to the database directly.
+The web made the same call — its deletion is in `delete-account-action.ts`, not
+`auth-actions.ts`. `supabase.rpc('delete_account')` is called **with no
+arguments**, mirroring the web action step for step and reusing its error copy
+verbatim; **no new API route was added and no RLS policy was changed**, because
+the function is granted to `authenticated` and needs no secret. Confirmation is
+the same inline type-`DELETE` gate as the web's, rather than a native `Alert`.
+
+**The legal links use a new pinned `webBaseUrl` in `mobile/src/lib/env.ts`,
+deliberately not `apiBaseUrl`.** `apiBaseUrl` is pointed at a LAN `next dev`
+server during development, and the Privacy Policy and Terms a user — or an App
+Review reviewer — opens must be the published pages in every build. They render
+through the existing `ExternalLink`, so no URL scheme or deep-link handling was
+added.
 
 **Persistence** — every completed analysis is written to `resume_analyses`,
 scoped to its owner by Row Level Security. The uploaded file itself is never
@@ -1112,13 +1159,19 @@ with `pnpm dlx shadcn@latest add <component>`.
 **Shipped** — Landing page, public legal pages, Authentication, Dashboard
 shell, Resume Analyzer, Resume Optimizer, ATS Compatibility Check, Cover Letter
 Generator, Career Insights, Interview Preparation, Account Settings (including
-web Delete Account). See Current Features for what each does and AI
+Delete Account on both clients). See Current Features for what each does and AI
 Architecture for how the six AI-backed tools are built.
 
 **All six tools have now shipped on mobile**: Resume Analyzer, ATS
 Compatibility Check, Resume Optimizer, Cover Letter Generator, Career Insights,
 and Interview Preparation. The app is at parity with the web dashboard's
 toolkit.
+
+**Account Settings has shipped on mobile too**, so the app now matches the web's
+account surface as well as its toolkit. It is a root-level route inside the
+existing `Stack.Protected` rather than a third tab — see Current Features for
+the navigation reasoning, the OTP-vs-link password divergence, and why deletion
+lives in `lib/account.ts`.
 
 **The mobile app's navigation is a two-tab bar — Home and Tools — with the
 tools behind a stack**, not a tab per tool. `app/(tabs)/tools/_layout.tsx` is a
@@ -1272,6 +1325,38 @@ session-local `pg_temp` function, which persists nothing. **The migration has
 not been applied**, so the function does not yet exist in `public`, and no
 end-to-end deletion has been executed against a real account.
 
+**The mobile Account Settings screen has been verified by static checks only.**
+The mobile project typechecks (`tsc --noEmit`, after regenerating `.expo/types`
+— `settings.tsx` is a new route, so typed routes do not know `/settings` until
+they are rebuilt), the web project passes
+`format:check`/`lint`/`typecheck`/`test` (38/38), and a production iOS bundle
+exports clean and contains the screen, all four section titles, the pinned
+`https://nexona-nine.vercel.app` origin with `/privacy` and `/terms`, the
+`delete_account` RPC name, the `DELETE` confirmation phrase, every button and
+field label, and the information-row copy — with the four pending labels and
+the em-dashed Danger Zone warning only as **UTF-16**, since each contains a
+non-ASCII character and an ASCII `grep` misses them. Note the apostrophe copy
+is **ASCII**, not UTF-16: `&apos;` in JSX decodes to a straight `'`, so
+searching those strings as UTF-16 gives a false negative.
+
+Be precise about what that does **not** cover, because it is much narrower than
+every record above. **Nothing on this screen has been exercised on a device or
+a simulator** — not the navigation from Home, not the information rows, not the
+legal links, not the password flow, not the delete confirmation. In particular:
+
+- **The three-phase OTP password flow is entirely unexercised.** No code has
+  been sent, verified, or used to set a password from Settings.
+- **`verifyOtp({ type: 'recovery' })` has never been called with a live
+  session.** Every existing call in this app runs signed out. It is expected to
+  succeed and replace the current session, but that is an expectation, not an
+  observation, and no type check can confirm it.
+- **Deletion has not been executed, and cannot be.** Migration `0009` is still
+  unapplied, so `public.delete_account()` does not exist — the mobile call would
+  fail with `PGRST202`. Neither the failure path nor the success path has been
+  observed, on either client.
+- The auth regression implied by the `app/_layout.tsx` edit — signed-out launch,
+  sign-in, sign-out, and all six tools still opening — has **not** been re-run.
+
 **On what "verified" means here.** Every tool has passed `format`, `lint`,
 `typecheck`, `build`, the `.next/static/` Gemini-bundle check, a live model
 call against its real prompt and schema, and a signed-out route-guard check.
@@ -1292,6 +1377,24 @@ Important Notes for the routine that produced these.
 
 ## Known Limitations
 
+- **Migration `0009` is still unapplied, and both deletion UIs now depend on
+  it.** `public.delete_account()` does not exist in the live database, so
+  tapping through the mobile Danger Zone — or clicking through the web one —
+  fails with a PostgREST `PGRST202` and shows the generic error. Both clients
+  are wired correctly; the function simply is not there. Applying it must be
+  done as `postgres` in the SQL Editor, and the first execution afterwards will
+  be the first real account deletion this project has ever performed, so it
+  belongs on a throwaway account.
+- **Neither client can edit the account email or the display name.** Both are
+  read-only on the web settings page and on the mobile one, because changing
+  either needs auth behaviour (re-verification, a confirmation email) that
+  nothing here implements. "Account information" is a readout, not a form.
+- **`webBaseUrl` in `mobile/src/lib/env.ts` is a hardcoded origin.** The
+  Privacy Policy and Terms links point at it directly and are deliberately not
+  overridable by `EXPO_PUBLIC_API_BASE_URL`, so if the deployed origin changes
+  or a custom domain lands, both links 404 silently in release builds with no
+  error surfaced anywhere. Changing it is a one-line edit, but nothing detects
+  the need for it.
 - **`.doc` is not supported.** The picker accepts `.pdf,.doc,.docx` and
   `validateResumeFile` passes `.doc` through, but extraction rejects it with a
   clear message — no reliable pure-JS extractor exists for the legacy binary

@@ -47,3 +47,18 @@ export const supabaseAnonKey = required(
  */
 export const apiBaseUrl =
   process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'https://nexona-nine.vercel.app';
+
+/**
+ * Public site origin, for the published Privacy Policy and Terms of Service.
+ *
+ * Deliberately NOT `apiBaseUrl`, and deliberately not overridable by an
+ * environment variable. `apiBaseUrl` is pointed at a LAN `next dev` server
+ * during development, and the legal pages a user — or an App Review reviewer —
+ * opens must be the published ones in every build, not whatever a developer
+ * machine happens to be serving. Pinning it means what is checked on device is
+ * what ships.
+ *
+ * The consequence to know: if the deployed origin ever changes, these links
+ * 404 silently in release builds. Changing it is a one-line edit here.
+ */
+export const webBaseUrl = 'https://nexona-nine.vercel.app';
