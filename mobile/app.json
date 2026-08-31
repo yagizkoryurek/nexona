@@ -1,20 +1,25 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "Nexona",
+    "slug": "nexona",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "mobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/icon-ios.png",
       "bundleIdentifier": "com.nexona.app",
       "supportsTablet": true,
-      "requireFullScreen": true
+      "requireFullScreen": true,
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.nexona.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -42,6 +47,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "owner": "nexona",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "555a5fae-77dd-4870-bd8c-636686922a17"
+      }
     }
   }
 }
