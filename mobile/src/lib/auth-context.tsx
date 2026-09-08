@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -35,6 +36,21 @@ type AuthContextValue = {
   session: Session | null;
   /** True until the persisted session has been read off disk at least once. */
   loading: boolean;
+  /**
+   * True while `session` is a recovery session that began from a signed-out
+   * state — i.e. the user verified a recovery code on `(auth)/verify` and still
+   * has to set a new password.
+   *
+   * The root guards read this to keep the `(auth)` group mounted, because a
+   * recovery session is otherwise indistinguishable from a normal one and would
+   * hand the user straight to the tabs with their old password still valid.
+   *
+   * This is a navigation aid, never a security boundary. A recovery session is
+   * a full-privilege session as far as Supabase is concerned, and this flag is
+   * React state that does not survive a cold launch — see the `PASSWORD_RECOVERY`
+   * handling below.
+   */
+  isRecoverySession: boolean;
   signIn: (email: string, password: string) => Promise<Result>;
   signUp: (name: string, email: string, password: string) => Promise<Result>;
   /** Confirms a new account with the emailed code, which also signs the user in. */
@@ -53,6 +69,13 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRecoverySession, setIsRecoverySession] = useState(false);
+
+  // Mirrors `session` for the auth listener, which has to know whether a
+  // session already existed *before* the event it is handling. Reading that
+  // from inside a `setSession` updater would make the updater impure, and the
+  // listener's closure over `session` would be stale.
+  const sessionRef = useRef<Session | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -63,6 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Auth server (see src/lib/supabase/route-handler.ts in the web app).
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
+      sessionRef.current = data.session;
       setSession(data.session);
       setLoading(false);
     });
@@ -71,7 +95,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // navigation guard follows session state without any screen pushing it.
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        // `verifyOtp({ type: 'recovery' })` emits this and establishes a real
+        // session, which would otherwise read as a completed sign-in and send
+        // the user to the tabs with the reset screen never shown.
+        //
+        // Only a recovery that starts signed out sets the flag. Settings runs
+        // the identical `verifyPasswordReset` with a live session
+        // (components/settings/change-password-card.tsx), and flagging that
+        // would unmount the very card the user is standing on, halfway through
+        // the change. The prior session is the only thing that separates the
+        // two, since the event and the session are the same in both.
+        setIsRecoverySession(sessionRef.current === null);
+      } else if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        setIsRecoverySession(false);
+      }
+      // Every other event deliberately leaves the flag alone. TOKEN_REFRESHED
+      // fires while the user is still choosing a password, and USER_UPDATED
+      // fires from `updatePassword` just before the sign-out that ends the
+      // flow — clearing on either would flip the guard mid-reset.
+
+      sessionRef.current = nextSession;
       setSession(nextSession);
       setLoading(false);
     });
@@ -86,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       session,
       loading,
+      isRecoverySession,
 
       async signIn(email, password) {
         try {
@@ -257,7 +303,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await supabase.auth.signOut().catch(() => undefined);
       },
     }),
-    [session, loading]
+    [session, loading, isRecoverySession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

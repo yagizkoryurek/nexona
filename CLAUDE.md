@@ -264,11 +264,13 @@ not touched.
 
 **The password flow diverges from the web's, and has to.** The web emails a
 _link_; mobile completes both email flows with an OTP _code_, and its `(auth)`
-group is guarded by `!session`, so a signed-in user cannot navigate to
-`/forgot-password`, `/verify` or `/reset-password` at all. This is the mobile
-analogue of the web's `AUTH_ONLY_PATHS` problem, and Settings solves it the same
-way the web card does — by calling the actions directly rather than linking to
-the page. `ChangePasswordCard` runs the whole thing in place across three phases
+group is guarded by `!session || isRecoverySession` — the second half holds the
+group open for a password reset that has been verified but not yet completed —
+so a normally signed-in user cannot navigate to `/forgot-password`, `/verify` or
+`/reset-password` at all. This is the mobile analogue of the web's
+`AUTH_ONLY_PATHS` problem, and Settings solves it the same way the web card
+does — by calling the actions directly rather than linking to the page.
+`ChangePasswordCard` runs the whole thing in place across three phases
 (`idle → code → password`), calling the same `requestPasswordReset`,
 `verifyPasswordReset` and `updatePassword` the `(auth)` screens call, so the two
 paths cannot drift. There is deliberately **no success screen**: `updatePassword`

@@ -20,13 +20,20 @@ import {
  *
  * The whole OTP flow runs here rather than handing off to the `(auth)` screens,
  * and that is forced rather than chosen: `app/_layout.tsx` guards that group
- * with `!session`, so a signed-in user cannot navigate to `/forgot-password`,
- * `/verify` or `/reset-password` at all. This is the mobile analogue of the web
- * middleware's AUTH_ONLY_PATHS problem, which the web settings page works around
- * the same way — by calling the action directly instead of linking to the page.
+ * with `!session || isRecoverySession`, and neither half holds here — a signed-in
+ * user cannot navigate to `/forgot-password`, `/verify` or `/reset-password` at
+ * all. This is the mobile analogue of the web middleware's AUTH_ONLY_PATHS
+ * problem, which the web settings page works around the same way — by calling
+ * the action directly instead of linking to the page.
  *
  * Every step calls the same `AuthContext` method the corresponding `(auth)`
  * screen calls, so the two paths cannot drift in behaviour or in error copy.
+ *
+ * That sharing is why `isRecoverySession` is set only when recovery begins from
+ * a signed-out state. `verifyPasswordReset` below emits the same
+ * `PASSWORD_RECOVERY` event the `(auth)` flow does, so a flag keyed on the event
+ * alone would flip the guard at the `code` phase and unmount this card before
+ * the user ever reaches `password`. Widening that condition breaks this screen.
  *
  * One difference from `(auth)/reset-password.tsx` worth knowing: that screen can
  * show a "Password updated" panel afterwards, because the sign-out leaves the

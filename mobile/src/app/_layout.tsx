@@ -51,13 +51,23 @@ function useAutoRefreshWhileActive() {
  * While `loading`, neither guard is satisfied and the splash overlay stays up —
  * this avoids the flash of the sign-in screen that would otherwise appear for
  * the moment it takes to read the persisted session off disk.
+ *
+ * The guards test more than session presence, because presence alone is not the
+ * question. Verifying a recovery code establishes a real session before the new
+ * password is set, so `Boolean(session)` would unmount the `(auth)` group out
+ * from under `(auth)/verify` — taking `/reset-password` with it — and drop the
+ * user on Home still using the password they came here to replace.
+ * `isRecoverySession` (lib/auth-context.tsx) is what separates that session from
+ * a completed sign-in; it is scoped to recovery begun while signed out, so the
+ * Settings password change, which holds a session throughout, is unaffected.
  */
 function RootNavigator() {
-  const { session, loading } = useAuth();
+  const { session, loading, isRecoverySession } = useAuth();
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={!loading && Boolean(session)}>
+      <Stack.Protected
+        guard={!loading && Boolean(session) && !isRecoverySession}>
         <Stack.Screen name="(tabs)" />
 
         {/*
@@ -84,7 +94,7 @@ function RootNavigator() {
         />
       </Stack.Protected>
 
-      <Stack.Protected guard={!loading && !session}>
+      <Stack.Protected guard={!loading && (!session || isRecoverySession)}>
         <Stack.Screen name="(auth)" />
       </Stack.Protected>
     </Stack>
