@@ -276,6 +276,40 @@ signs out, which flips the root guard and unmounts Settings with the rest of the
 signed-in area, so the user simply arrives at sign-in — hence the warning line
 shown _before_ they submit, and no `router` call anywhere in that file.
 
+**Which format an auth email takes is decided by a redirect sentinel the app
+sends.** One Supabase project serves both clients and there is one template per
+email type, so the template itself has to choose between the web's PKCE link and
+mobile's code — and the only thing it can choose from is what the client passed.
+`otpRedirectSentinel` in `mobile/src/lib/env.ts` is that discriminator. Both the
+Confirm signup and Reset password templates branch on an exact match:
+
+```
+{{ if eq .RedirectTo "https://nexona-nine.vercel.app/auth/app" }} code {{ else }} link {{ end }}
+```
+
+Three things about it are load-bearing, and the first was learned the hard way:
+
+- **It must be sent, not omitted.** An earlier attempt branched on
+  `{{ if .RedirectTo }}`, expecting the variable to be empty because the app
+  passed no redirect. It is not — GoTrue substitutes the Site URL when a client
+  sends nothing, so the link branch always ran and mobile users received a link
+  they could not use. Testing for absence cannot work.
+- **Every path that triggers an auth email must carry it.** That is all three of
+  `signUp`, `resendSignUp` and `requestPasswordReset` in `lib/auth-context.tsx`.
+  Missing one silently reverts that path to a link while the user sits on a code
+  screen. `resendSignUp` is new here, wrapping
+  `supabase.auth.resend({ type: 'signup' })` — it needs only the address, not the
+  password, which is what makes a resend possible from `/verify` at all.
+- **It must match the template byte for byte**, trailing slash included, because
+  the template compares with `eq`.
+
+Pinned rather than derived from `apiBaseUrl`, for the same reason `webBaseUrl` is:
+`apiBaseUrl` points at a LAN dev server during development, and a value that
+varies per environment could never match a fixed string in a template. Nothing
+ever navigates to it — the mobile branch renders no link at all — so it is a
+discriminator, not a destination. See the doc block in `env.ts` for the mechanics
+and Known Limitations for the drift risk.
+
 **Deletion lives in `mobile/src/lib/account.ts`, not in `AuthContext`.** Every
 method on that context maps to `supabase.auth.*`; this is a Postgres RPC, and
 `lib/analyses.ts` is the established home for talking to the database directly.
@@ -1395,6 +1429,18 @@ Important Notes for the routine that produced these.
   or a custom domain lands, both links 404 silently in release builds with no
   error surfaced anywhere. Changing it is a one-line edit, but nothing detects
   the need for it.
+- **Which email format mobile receives depends on three things outside this
+  repository.** `otpRedirectSentinel` has to match the `eq .RedirectTo` branch in
+  both the Confirm signup and Reset password templates byte for byte — trailing
+  slash included — and has to stay on the Redirect URLs allowlist. All three live
+  only in the Supabase dashboard, so nothing here versions them, and no
+  `typecheck`, `build` or test in this repo can detect drift. Every way of
+  breaking it produces the same silent symptom — a user gets the wrong email
+  format — whether the cause is an edited template, a removed allowlist entry, or
+  a changed deployed origin. Note a custom domain or origin change breaks this
+  **and** `webBaseUrl` at once, neither with an error. Verifying it takes a real
+  send: the `redirect_to` probe in Environment Variables confirms the allowlist
+  half only.
 - **`.doc` is not supported.** The picker accepts `.pdf,.doc,.docx` and
   `validateResumeFile` passes `.doc` through, but extraction rejects it with a
   clear message — no reliable pure-JS extractor exists for the legacy binary
@@ -1523,17 +1569,35 @@ be public and RLS protects the data. `GEMINI_API_KEY` must never get a
 
 **Supabase project settings** that the code assumes: email confirmations
 enabled; password minimum length 8 (matching the Zod schema); Site URL and
-Redirect URLs allowlisting the app origin and `/auth/callback`.
+Redirect URLs allowlisting the app origin and `/auth/callback`; email OTP length
+6 (the Supabase default, and what `OTP_LENGTH` in
+`mobile/src/lib/auth-validation.ts` expects).
 
-**The allowlist contract, because getting it wrong fails silently.** `signUp`
-and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo` from the
-request's own `Origin` (the `origin()` helper in `auth-actions.ts`), which is
+Two more the mobile app added, both dashboard-only: the Redirect URLs list must
+also allow `https://nexona-nine.vercel.app/auth/app`, and the **Confirm signup**
+and **Reset password** templates must each carry the `eq .RedirectTo` branch
+described in Current Features. Neither is expressed anywhere in this repository.
+
+**The allowlist contract, because getting it wrong fails silently.** The web's
+`signUp` and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo`
+from the request's own `Origin` (the `origin()` helper in `auth-actions.ts`) —
+the mobile methods of the same name do something different, below. That is
 correct for production — the deployed origin must be used, so hardcoding one
 would break Vercel. Supabase then checks that URL against **Redirect URLs**, and
 if it does not match it **discards the value and substitutes the Site URL**, with
 no error to the caller. The emailed link therefore appears to work but delivers
 the user to the Site URL's root instead of `/auth/callback`, and the flow dies
 with no server-side trace, because the app is never reached.
+
+**Mobile is bound by the same contract for a different reason.** It does not
+derive a URL from an origin — it sends the fixed `otpRedirectSentinel`, which
+never has to resolve because nothing navigates to it. But Supabase applies the
+allowlist check before it applies anything else, so a de-allowlisted sentinel is
+discarded and replaced with the Site URL exactly as above. The symptom differs:
+not a link to the wrong place, but the **wrong format entirely** — the template's
+`eq` no longer matches, so the web's PKCE link is emailed to a user sitting on a
+code-entry screen. Same silent substitution, same absence of any error, and it
+looks like a broken app rather than a missing allowlist entry.
 
 Currently allowlisted for local work: `http://localhost:3000` and
 `http://127.0.0.1:3000`. The machine's LAN address is **not**, which is why
@@ -1545,7 +1609,10 @@ Resolution can be checked without waiting for an email: request
 `/auth/v1/verify?token=<anything>&type=recovery&redirect_to=<candidate>` against
 the project and read the `Location` header. Supabase resolves `redirect_to`
 before it validates the token, so an allowlisted URL is echoed back while a
-rejected one is replaced by the Site URL.
+rejected one is replaced by the Site URL. This works unchanged for the sentinel:
+pass it as the candidate and check it comes back verbatim. That confirms the
+allowlist half without spending a rate-limited email — though it says nothing
+about whether the templates still carry the matching branch.
 
 ## Important Notes for Future Development
 

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { otpRedirectSentinel } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -38,6 +39,8 @@ type AuthContextValue = {
   signUp: (name: string, email: string, password: string) => Promise<Result>;
   /** Confirms a new account with the emailed code, which also signs the user in. */
   verifySignUp: (email: string, token: string) => Promise<Result>;
+  /** Re-sends the signup confirmation code. Needs only the address, not the password. */
+  resendSignUp: (email: string) => Promise<Result>;
   requestPasswordReset: (email: string) => Promise<Result>;
   /** Exchanges the emailed recovery code for a short-lived recovery session. */
   verifyPasswordReset: (email: string, token: string) => Promise<Result>;
@@ -105,9 +108,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const { error } = await supabase.auth.signUp({
             email: email.trim(),
             password,
-            // `full_name` matches what the web sign-up stores, so an account
-            // created on either client looks the same.
-            options: { data: { full_name: name.trim() } },
+            options: {
+              // `full_name` matches what the web sign-up stores, so an account
+              // created on either client looks the same.
+              data: { full_name: name.trim() },
+              // Not a destination — the discriminator the email template reads
+              // to send a code rather than the web's link. See
+              // `otpRedirectSentinel` in lib/env.ts for why it must be sent
+              // rather than omitted.
+              emailRedirectTo: otpRedirectSentinel,
+            },
           });
 
           if (error) {
@@ -136,9 +146,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
 
           if (error) {
+            // Deliberately mentions signing in. The confirmation code and the
+            // link in the same email are two encodings of ONE single-use
+            // token, so a user who opened the link has already confirmed their
+            // account and this code is now spent. Without that hint the most
+            // likely reading of this message — "my account is broken" — is
+            // exactly wrong.
             return {
               error:
-                'That code is incorrect or has expired. Request a new one and try again.',
+                "That code is incorrect or has expired. Request a new one, or sign in if you've already confirmed your account.",
             };
           }
 
@@ -150,12 +166,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       },
 
+      async resendSignUp(email) {
+        try {
+          // Must carry the sentinel, exactly as `signUp` does. The templates
+          // branch on an exact `{{ .RedirectTo }}` match, and GoTrue fills in
+          // the Site URL when a client sends nothing — so omitting it here
+          // would make a resend arrive as the web's link while the user sits on
+          // a code screen. Every path that triggers an auth email sends it.
+          const { error } = await supabase.auth.resend({
+            type: 'signup',
+            email: email.trim(),
+            options: { emailRedirectTo: otpRedirectSentinel },
+          });
+
+          if (error) return { error: GENERIC_ERROR };
+          return {};
+        } catch {
+          return { error: GENERIC_ERROR };
+        }
+      },
+
       async requestPasswordReset(email) {
         try {
           // Supabase does not error on an unknown address, and this must not
           // undermine that by branching on a "no such user" case.
+          //
+          // The sentinel is what makes the Reset password template send a code
+          // rather than the web's link — the same mechanism as `signUp`, and
+          // the reason recovery needs it too: nothing else distinguishes a
+          // mobile recovery request from a web one at send time.
           const { error } = await supabase.auth.resetPasswordForEmail(
-            email.trim()
+            email.trim(),
+            { redirectTo: otpRedirectSentinel }
           );
 
           if (error) return { error: GENERIC_ERROR };

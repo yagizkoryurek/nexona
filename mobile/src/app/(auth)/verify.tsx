@@ -14,10 +14,28 @@ import { OTP_LENGTH, validateOtp } from '@/lib/auth-validation';
 /**
  * Shared code-entry screen for both email flows.
  *
- * Supabase emails a numeric token alongside the usual link; the app reads the
- * token and ignores the link, which is why this project needs no URL scheme,
- * deep-link handling, or in-app browser. `purpose` selects which verifyOtp type
- * runs, since the two flows differ only in that and in where they go next:
+ * Supabase emails a numeric token, which is why this project needs no URL
+ * scheme, deep-link handling, or in-app browser.
+ *
+ * One Supabase project serves both clients, so both email templates branch on
+ * an exact `{{ .RedirectTo }}` match against `otpRedirectSentinel` (lib/env.ts),
+ * which this app sends on every call that triggers an auth email. Web-initiated
+ * mail carries the PKCE link; mobile-initiated mail carries the code this screen
+ * reads.
+ *
+ * Note the branch keys on a value mobile *sends*, not on one it omits: GoTrue
+ * fills `{{ .RedirectTo }}` with the Site URL when a client passes nothing, so
+ * an absence test silently sends mobile users the web link. That was tried and
+ * failed.
+ *
+ * The split matters because `{{ .Token }}` and the link's `{{ .TokenHash }}` are
+ * two encodings of ONE single-use token: whichever is used first spends the
+ * other. Sending both to the same user is therefore a race, not a convenience —
+ * hence the branch, and hence the "Already confirmed?" escape hatch below for
+ * anyone who reaches the link some other way.
+ *
+ * `purpose` selects which verifyOtp type runs, since the two flows differ only
+ * in that and in where they go next:
  *
  * - signup   -> verification establishes a real session, and the root guard
  *               swaps this whole group out for the tabs. Nothing to navigate.
@@ -26,7 +44,12 @@ import { OTP_LENGTH, validateOtp } from '@/lib/auth-validation';
  *               the reset screen.
  */
 export default function VerifyScreen() {
-  const { verifySignUp, verifyPasswordReset, requestPasswordReset } = useAuth();
+  const {
+    verifySignUp,
+    verifyPasswordReset,
+    requestPasswordReset,
+    resendSignUp,
+  } = useAuth();
 
   const params = useLocalSearchParams<{
     email?: string;
@@ -71,10 +94,13 @@ export default function VerifyScreen() {
   }
 
   /**
-   * Re-sends a recovery code. Offered only for recovery: re-sending a signup
-   * confirmation needs the password, which this screen never receives, so a
-   * user who needs a fresh confirmation goes back and signs up again rather
-   * than being given a button that cannot work.
+   * Re-sends the code, for either flow.
+   *
+   * Signup used to be excluded here on the grounds that re-sending a
+   * confirmation needs the password, which this screen never receives. That is
+   * true of `signUp`, but not of `supabase.auth.resend({ type: 'signup' })`,
+   * which needs only the address — so the exclusion was unnecessary, and it
+   * left a user whose code expired with no way forward but to sign up again.
    *
    * Supabase rate limits these sends, so a throttled retry surfaces as the
    * generic failure rather than claiming another email went out.
@@ -86,7 +112,9 @@ export default function VerifyScreen() {
     setNotice(undefined);
     setResending(true);
 
-    const { error } = await requestPasswordReset(email);
+    const { error } = isRecovery
+      ? await requestPasswordReset(email)
+      : await resendSignUp(email);
 
     setResending(false);
 
@@ -141,13 +169,28 @@ export default function VerifyScreen() {
         onPress={onSubmit}
       />
 
-      {isRecovery ? (
+      <AuthLink
+        label={resending ? 'Sending…' : 'Send a new code'}
+        disabled={resending || pending}
+        onPress={onResend}
+      />
+
+      {/*
+        Signup only, and it is not merely a convenience. The emailed code and
+        the emailed link are one single-use token, so a user who opened the
+        link has already confirmed their account and every code they type here
+        will now fail. "Back" would return them to sign-up, which then errors
+        with `user_already_exists` — a dead end for someone whose account is
+        actually fine. `dismissTo('/')` unwinds the auth stack to sign-in, the
+        same call the reset-password screen uses to get there.
+      */}
+      {isRecovery ? null : (
         <AuthLink
-          label={resending ? 'Sending…' : 'Send a new code'}
-          disabled={resending || pending}
-          onPress={onResend}
+          label="Already confirmed? Sign in"
+          disabled={pending}
+          onPress={() => router.dismissTo('/')}
         />
-      ) : null}
+      )}
 
       <AuthLink
         label="Back"
