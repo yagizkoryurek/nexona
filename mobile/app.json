@@ -12,6 +12,7 @@
       "bundleIdentifier": "com.nexona.app",
       "supportsTablet": true,
       "requireFullScreen": true,
+      "usesAppleSignIn": true,
       "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false
@@ -42,7 +43,8 @@
           "imageWidth": 76
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true,

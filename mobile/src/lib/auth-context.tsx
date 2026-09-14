@@ -9,6 +9,10 @@ import {
   type ReactNode,
 } from 'react';
 
+import {
+  signInWithApple as requestAppleSignIn,
+  type AppleSignInResult,
+} from '@/lib/apple-auth';
 import { otpRedirectSentinel } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 
@@ -52,6 +56,14 @@ type AuthContextValue = {
    */
   isRecoverySession: boolean;
   signIn: (email: string, password: string) => Promise<Result>;
+  /**
+   * Native Sign in with Apple. Resolves `{ cancelled: true }` when the user
+   * dismisses Apple's sheet, which callers must not render as an error.
+   *
+   * Like every method here it returns a result and nothing else — the session
+   * listener below is what moves the user, not this call.
+   */
+  signInWithApple: () => Promise<AppleSignInResult>;
   signUp: (name: string, email: string, password: string) => Promise<Result>;
   /** Confirms a new account with the emailed code, which also signs the user in. */
   verifySignUp: (email: string, token: string) => Promise<Result>;
@@ -148,6 +160,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return { error: GENERIC_ERROR };
         }
       },
+
+      // Delegates wholesale to lib/apple-auth.ts. Exposed here as a method so
+      // screens reach every auth mutation through one hook, rather than
+      // importing the provider module directly and bypassing the context.
+      signInWithApple: requestAppleSignIn,
 
       async signUp(name, email, password) {
         try {

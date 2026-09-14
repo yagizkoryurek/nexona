@@ -1,8 +1,11 @@
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
 import { useState } from 'react';
 
+import { AppleSignInButton } from '@/components/auth/apple-sign-in-button';
 import {
   AuthButton,
+  AuthDivider,
   AuthField,
   AuthLink,
   AuthScreen,
@@ -30,9 +33,15 @@ export default function SignInScreen() {
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [formError, setFormError] = useState<string>();
   const [pending, setPending] = useState(false);
+  // Apple's sheet runs outside this form, so its in-flight state is tracked
+  // separately and then folded into `busy`. Both paths end in the same
+  // `onAuthStateChange` listener, so letting them run at once would race two
+  // sign-ins against one guard.
+  const [applePending, setApplePending] = useState(false);
+  const busy = pending || applePending;
 
   async function onSubmit() {
-    if (pending) return;
+    if (busy) return;
 
     setFormError(undefined);
     const nextErrors = validateSignIn({ email, password });
@@ -65,7 +74,7 @@ export default function SignInScreen() {
         autoComplete="email"
         textContentType="emailAddress"
         autoCorrect={false}
-        editable={!pending}
+        editable={!busy}
       />
 
       <AuthField
@@ -78,7 +87,7 @@ export default function SignInScreen() {
         autoCapitalize="none"
         autoComplete="current-password"
         textContentType="password"
-        editable={!pending}
+        editable={!busy}
         onSubmitEditing={onSubmit}
         returnKeyType="go"
       />
@@ -87,18 +96,28 @@ export default function SignInScreen() {
         label="Sign in"
         pendingLabel="Signing in…"
         pending={pending}
+        disabled={applePending}
         onPress={onSubmit}
+      />
+
+      <AuthDivider />
+
+      <AppleSignInButton
+        buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+        disabled={pending}
+        onPendingChange={setApplePending}
+        onError={setFormError}
       />
 
       <AuthLink
         label="Forgot your password?"
-        disabled={pending}
+        disabled={busy}
         onPress={() => router.push('/forgot-password')}
       />
 
       <AuthLink
         label="New to Nexona? Create an account"
-        disabled={pending}
+        disabled={busy}
         onPress={() => router.push('/sign-up')}
       />
     </AuthScreen>

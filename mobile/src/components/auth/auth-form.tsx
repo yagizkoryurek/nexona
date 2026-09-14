@@ -128,29 +128,41 @@ export const AuthField = forwardRef<TextInput, AuthFieldProps>(
   }
 );
 
-/** Primary action. Disabled and spinner-labelled while a request is in flight. */
+/**
+ * Primary action. Disabled and spinner-labelled while a request is in flight.
+ *
+ * `disabled` is separate from `pending` on purpose. `pending` means *this*
+ * button's own request is running, so it shows the spinner and the pending
+ * label; `disabled` means something else on the screen is busy — Apple's
+ * sign-in sheet, say — so the button is inert but must not claim to be doing
+ * the work itself.
+ */
 export function AuthButton({
   label,
   pendingLabel,
   pending,
+  disabled,
   onPress,
 }: {
   label: string;
   pendingLabel: string;
   pending: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
+  const inert = pending || Boolean(disabled);
+
   return (
     <Pressable
       onPress={onPress}
-      disabled={pending}
+      disabled={inert}
       accessibilityRole="button"
-      accessibilityState={{ disabled: pending, busy: pending }}
+      accessibilityState={{ disabled: inert, busy: pending }}
       accessibilityLabel={pending ? pendingLabel : label}
       style={({ pressed }) => [
         styles.button,
         pressed && styles.buttonPressed,
-        pending && styles.buttonDisabled,
+        inert && styles.buttonDisabled,
       ]}>
       {pending ? (
         <View style={styles.buttonBusy}>
@@ -165,6 +177,32 @@ export function AuthButton({
         </ThemedText>
       )}
     </Pressable>
+  );
+}
+
+/**
+ * Horizontal rule with a centred label, separating the email form from the
+ * Apple button on the two signed-out screens.
+ *
+ * Purely presentational. `aria-hidden` because the rule carries no information
+ * a screen reader needs — the two buttons it sits between already announce
+ * themselves, and reading out a stray "or" between them is noise.
+ */
+export function AuthDivider({ label = 'or' }: { label?: string }) {
+  const theme = useTheme();
+
+  return (
+    <View style={styles.dividerRow} aria-hidden>
+      <View
+        style={[styles.dividerLine, { backgroundColor: theme.backgroundSelected }]}
+      />
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+      <View
+        style={[styles.dividerLine, { backgroundColor: theme.backgroundSelected }]}
+      />
+    </View>
   );
 }
 
@@ -288,6 +326,13 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   buttonText: { color: '#ffffff' },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    marginTop: Spacing.two,
+  },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth },
   linkRow: { alignItems: 'center', paddingVertical: Spacing.one },
   linkDisabled: { opacity: 0.5 },
   checkboxRow: {

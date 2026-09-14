@@ -1,9 +1,12 @@
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { router } from 'expo-router';
 import { useState } from 'react';
 
+import { AppleSignInButton } from '@/components/auth/apple-sign-in-button';
 import {
   AuthButton,
   AuthCheckbox,
+  AuthDivider,
   AuthField,
   AuthLink,
   AuthScreen,
@@ -36,9 +39,13 @@ export default function SignUpScreen() {
   const [errors, setErrors] = useState<FieldErrors<SignUpField>>({});
   const [formError, setFormError] = useState<string>();
   const [pending, setPending] = useState(false);
+  // See the sign-in screen for why Apple's in-flight state is tracked apart
+  // from this form's: both paths end in the same session listener.
+  const [applePending, setApplePending] = useState(false);
+  const busy = pending || applePending;
 
   async function onSubmit() {
-    if (pending) return;
+    if (busy) return;
 
     setFormError(undefined);
     const nextErrors = validateSignUp({
@@ -83,7 +90,7 @@ export default function SignUpScreen() {
         autoCapitalize="words"
         autoComplete="name"
         textContentType="name"
-        editable={!pending}
+        editable={!busy}
       />
 
       <AuthField
@@ -97,7 +104,7 @@ export default function SignUpScreen() {
         autoComplete="email"
         textContentType="emailAddress"
         autoCorrect={false}
-        editable={!pending}
+        editable={!busy}
       />
 
       <AuthField
@@ -110,7 +117,7 @@ export default function SignUpScreen() {
         autoCapitalize="none"
         autoComplete="new-password"
         textContentType="newPassword"
-        editable={!pending}
+        editable={!busy}
       />
 
       <AuthField
@@ -123,7 +130,7 @@ export default function SignUpScreen() {
         autoCapitalize="none"
         autoComplete="new-password"
         textContentType="newPassword"
-        editable={!pending}
+        editable={!busy}
       />
 
       <AuthCheckbox
@@ -137,12 +144,27 @@ export default function SignUpScreen() {
         label="Create account"
         pendingLabel="Creating account…"
         pending={pending}
+        disabled={applePending}
         onPress={onSubmit}
+      />
+
+      <AuthDivider />
+
+      {/*
+        SIGN_UP renders Apple's "Sign up with Apple" title, which is the honest
+        label on this screen — the sign-in screen passes SIGN_IN for the same
+        reason.
+      */}
+      <AppleSignInButton
+        buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
+        disabled={pending}
+        onPendingChange={setApplePending}
+        onError={setFormError}
       />
 
       <AuthLink
         label="Already have an account? Sign in"
-        disabled={pending}
+        disabled={busy}
         onPress={() => router.back()}
       />
     </AuthScreen>
