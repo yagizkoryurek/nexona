@@ -1,0 +1,12 @@
+# This file makes mobile/ its own pnpm workspace root, so pnpm stops here
+# instead of walking up to the repo root's pnpm-workspace.yaml. Without it, any
+# `pnpm` run from this directory — including EAS Build's own
+# `pnpm install --frozen-lockfile` — adopts the root workspace: it reads the
+# root lockfile, installs the web app's dependencies into the root
+# node_modules, and never creates mobile/node_modules. A `.npmrc` cannot do
+# this: pnpm resolves the workspace directory before it reads any config file.
+#
+# The mobile app is deliberately a single project, not a workspace member —
+# it keeps its own lockfile (pnpm-lock.yaml beside this file).
+packages:
+  - "."
