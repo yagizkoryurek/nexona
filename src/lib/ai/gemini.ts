@@ -3,6 +3,8 @@ import type { z } from "zod";
 
 import { requireGeminiApiKey } from "@/lib/env";
 
+import { retryOnTransientGeminiError } from "./gemini-retry";
+
 // One client for the process. Each AI module used to construct its own; the
 // client holds no per-request state (unlike the Supabase server client, which
 // is cookie-scoped), so a single shared instance behaves identically with one
@@ -43,6 +45,13 @@ type StructuredJsonRequest<S extends z.ZodType> = {
  *
  * Callers own their own prompt, response schema, and Zod schema — only the
  * client, the model id, and this call/guard/parse sequence are shared.
+ *
+ * Only the network call is wrapped in the retry. The empty-text guard,
+ * `JSON.parse`, and `schema.parse` below run once against whichever attempt
+ * succeeded, so a truncated or wrong-shaped response is still a single
+ * `SyntaxError` or `ZodError` — never retried, never re-typed. See
+ * `./gemini-retry` for what counts as transient and why the bounds are what
+ * they are.
  */
 export async function requestStructuredJson<S extends z.ZodType>({
   schema,
@@ -51,15 +60,17 @@ export async function requestStructuredJson<S extends z.ZodType>({
   contents,
   emptyResponseError,
 }: StructuredJsonRequest<S>): Promise<z.infer<S>> {
-  const response = await genai.models.generateContent({
-    model: MODEL,
-    contents,
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema,
-    },
-  });
+  const response = await retryOnTransientGeminiError(() =>
+    genai.models.generateContent({
+      model: MODEL,
+      contents,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema,
+      },
+    }),
+  );
 
   if (!response.text) {
     throw new Error(emptyResponseError);
