@@ -17,6 +17,8 @@
  * instead of talking to Gemini directly.
  */
 
+import Constants from 'expo-constants';
+
 function required(value: string | undefined, name: string): string {
   if (value === undefined || value.trim() === '') {
     throw new Error(
@@ -39,14 +41,89 @@ export const supabaseAnonKey = required(
 );
 
 /**
+ * Extracts the bare host from Expo's `hostUri` ("<host>:<metro-port>"), which
+ * is untrusted-shaped even though it's first-party — defensive rather than a
+ * bare `.split(':')[0]`.
+ *
+ * Handles: a plain host with no port, a bracketed IPv6 literal
+ * ("[::1]:8081"), and strips an unexpected scheme or path/query suffix.
+ * Refuses to guess on an unbracketed IPv6 host (more than one colon left
+ * after the above), since splitting on the first colon would silently
+ * truncate it — returns null instead, which falls through to the next
+ * precedence tier below rather than building a malformed URL.
+ */
+function hostFromHostUri(hostUri: string): string | null {
+  let value = hostUri.trim();
+  if (!value) return null;
+
+  value = value.replace(/^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//, '');
+  value = value.split(/[/?#]/)[0];
+  if (!value) return null;
+
+  if (value.startsWith('[')) {
+    const closing = value.indexOf(']');
+    return closing > 0 ? value.slice(0, closing + 1) : null;
+  }
+
+  const colonCount = (value.match(/:/g) ?? []).length;
+  if (colonCount === 0) return value;
+  if (colonCount === 1) return value.split(':')[0];
+  return null;
+}
+
+/**
+ * Derives the local dev API host from Metro's own dev-server address, so a
+ * physical device or simulator can reach `next dev` without a hand-maintained
+ * LAN IP in .env.local that goes stale on every DHCP lease change.
+ *
+ * `Constants.expoConfig?.hostUri` is the same "<host>:<metro-port>" address
+ * (e.g. "192.168.68.55:8081") the device already used to fetch the JS bundle
+ * — so whatever host got the bundle onto the device can also serve the API,
+ * given `next dev` binds to all interfaces on port 3000 (confirmed: it does).
+ * Only the host is kept; the port is always overridden to 3000 regardless of
+ * whatever port Metro itself is using.
+ *
+ * Guarded by two independent signals, both required, so a single one
+ * misbehaving can't leak a LAN URL into a release build:
+ * - `__DEV__` is baked into the bundle by the RN/Metro release process itself
+ *   and is `false` in every release JS bundle, independent of expo-constants.
+ * - `Constants.expoConfig?.hostUri` is documented as present only "during
+ *   development using @expo/cli" — undefined in a Standalone/EAS release
+ *   build even if `__DEV__` were somehow wrong.
+ *
+ * Known limitations:
+ * - `expo start --tunnel`: `hostUri` becomes a tunnel address where port 3000
+ *   is almost certainly not forwarded — this would derive an unreachable URL.
+ *   Use the explicit `EXPO_PUBLIC_API_BASE_URL` override in that mode.
+ * - `expo start --localhost`: `hostUri` resolves to `localhost`, unreachable
+ *   from a physical device — a pre-existing limitation, not a regression.
+ * - Assumes `next dev` runs on the same machine as Metro, listening on port
+ *   3000 on all interfaces (already true today).
+ */
+function deriveDevApiBaseUrl(): string | null {
+  if (!__DEV__) return null;
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (!hostUri) return null;
+  const host = hostFromHostUri(hostUri);
+  return host ? `http://${host}:3000` : null;
+}
+
+/**
  * Base URL of the Next.js app hosting the /api/mobile/* routes.
  *
- * Optional: falls back to the deployed origin, which is what a release build
- * should talk to anyway. Set it in .env.local to point a simulator at a local
- * `next dev` server instead.
+ * Three-tier precedence:
+ * 1. `EXPO_PUBLIC_API_BASE_URL`, if set — wins unconditionally, in dev or
+ *    prod. The escape hatch for tunnel mode, a custom port, a different host,
+ *    or forcing production while running a dev build.
+ * 2. The auto-derived dev host (see `deriveDevApiBaseUrl`) — only applies in
+ *    development, and only when Expo actually reports a `hostUri`.
+ * 3. The deployed origin, which is what a release build should talk to
+ *    anyway and what dev falls back to if `hostUri` is unavailable.
  */
 export const apiBaseUrl =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() || 'https://nexona-nine.vercel.app';
+  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
+  deriveDevApiBaseUrl() ||
+  'https://nexona-nine.vercel.app';
 
 /**
  * Public site origin, for the published Privacy Policy and Terms of Service.
