@@ -1386,10 +1386,14 @@ legal links, not the password flow, not the delete confirmation. In particular:
   session.** Every existing call in this app runs signed out. It is expected to
   succeed and replace the current session, but that is an expectation, not an
   observation, and no type check can confirm it.
-- **Deletion has not been executed, and cannot be.** Migration `0009` is still
-  unapplied, so `public.delete_account()` does not exist — the mobile call would
-  fail with `PGRST202`. Neither the failure path nor the success path has been
-  observed, on either client.
+- **Migration `0009` is applied, and `public.delete_account()` exists in the
+  live database** — confirmed directly against `information_schema.routines`
+  and the function's own catalog entry (`SECURITY DEFINER`, `search_path = ''`,
+  owned by `postgres`, zero arguments, matching the spec exactly). **No actual
+  deletion has been observed on either client, though.** Neither the failure
+  path nor the success path has been exercised end to end — the first real
+  execution will still be the first account deletion this project has ever
+  performed.
 - The auth regression implied by the `app/_layout.tsx` edit — signed-out launch,
   sign-in, sign-out, and all six tools still opening — has **not** been re-run.
 
@@ -1413,14 +1417,13 @@ Important Notes for the routine that produced these.
 
 ## Known Limitations
 
-- **Migration `0009` is still unapplied, and both deletion UIs now depend on
-  it.** `public.delete_account()` does not exist in the live database, so
-  tapping through the mobile Danger Zone — or clicking through the web one —
-  fails with a PostgREST `PGRST202` and shows the generic error. Both clients
-  are wired correctly; the function simply is not there. Applying it must be
-  done as `postgres` in the SQL Editor, and the first execution afterwards will
-  be the first real account deletion this project has ever performed, so it
-  belongs on a throwaway account.
+- **Migration `0009` is applied — `public.delete_account()` exists in the live
+  database — but the account-deletion flow has still never been exercised end
+  to end on either client.** Both clients are wired correctly and the function
+  is live, but tapping through the mobile Danger Zone or clicking through the
+  web one has not actually been done: the first real execution will still be
+  the first account deletion this project has ever performed, so it belongs on
+  a throwaway account when it happens.
 - **Neither client can edit the account email or the display name.** Both are
   read-only on the web settings page and on the mobile one, because changing
   either needs auth behaviour (re-verification, a confirmation email) that
