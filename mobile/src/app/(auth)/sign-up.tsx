@@ -11,6 +11,7 @@ import {
   AuthLink,
   AuthScreen,
 } from '@/components/auth/auth-form';
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button';
 import { useAuth } from '@/lib/auth-context';
 import {
   hasErrors,
@@ -39,10 +40,12 @@ export default function SignUpScreen() {
   const [errors, setErrors] = useState<FieldErrors<SignUpField>>({});
   const [formError, setFormError] = useState<string>();
   const [pending, setPending] = useState(false);
-  // See the sign-in screen for why Apple's in-flight state is tracked apart
-  // from this form's: both paths end in the same session listener.
+  // See the sign-in screen for why Apple's and Google's in-flight state is
+  // tracked apart from this form's: every path ends in the same session
+  // listener.
   const [applePending, setApplePending] = useState(false);
-  const busy = pending || applePending;
+  const [googlePending, setGooglePending] = useState(false);
+  const busy = pending || applePending || googlePending;
 
   async function onSubmit() {
     if (busy) return;
@@ -144,11 +147,18 @@ export default function SignUpScreen() {
         label="Create account"
         pendingLabel="Creating account…"
         pending={pending}
-        disabled={applePending}
+        disabled={applePending || googlePending}
         onPress={onSubmit}
       />
 
       <AuthDivider />
+
+      <GoogleSignInButton
+        label="Sign up with Google"
+        disabled={pending || applePending}
+        onPendingChange={setGooglePending}
+        onError={setFormError}
+      />
 
       {/*
         SIGN_UP renders Apple's "Sign up with Apple" title, which is the honest
@@ -157,7 +167,7 @@ export default function SignUpScreen() {
       */}
       <AppleSignInButton
         buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP}
-        disabled={pending}
+        disabled={pending || googlePending}
         onPendingChange={setApplePending}
         onError={setFormError}
       />

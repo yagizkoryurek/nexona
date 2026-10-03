@@ -10,6 +10,7 @@ import {
   AuthLink,
   AuthScreen,
 } from '@/components/auth/auth-form';
+import { GoogleSignInButton } from '@/components/auth/google-sign-in-button';
 import { useAuth } from '@/lib/auth-context';
 import {
   hasErrors,
@@ -33,12 +34,13 @@ export default function SignInScreen() {
   const [errors, setErrors] = useState<FieldErrors<SignInField>>({});
   const [formError, setFormError] = useState<string>();
   const [pending, setPending] = useState(false);
-  // Apple's sheet runs outside this form, so its in-flight state is tracked
-  // separately and then folded into `busy`. Both paths end in the same
-  // `onAuthStateChange` listener, so letting them run at once would race two
-  // sign-ins against one guard.
+  // Apple's and Google's sheets run outside this form, so their in-flight
+  // state is tracked separately and then folded into `busy`. All three paths
+  // end in the same `onAuthStateChange` listener, so letting two run at once
+  // would race two sign-ins against one guard.
   const [applePending, setApplePending] = useState(false);
-  const busy = pending || applePending;
+  const [googlePending, setGooglePending] = useState(false);
+  const busy = pending || applePending || googlePending;
 
   async function onSubmit() {
     if (busy) return;
@@ -96,15 +98,22 @@ export default function SignInScreen() {
         label="Sign in"
         pendingLabel="Signing in…"
         pending={pending}
-        disabled={applePending}
+        disabled={applePending || googlePending}
         onPress={onSubmit}
       />
 
       <AuthDivider />
 
+      <GoogleSignInButton
+        label="Sign in with Google"
+        disabled={pending || applePending}
+        onPendingChange={setGooglePending}
+        onError={setFormError}
+      />
+
       <AppleSignInButton
         buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-        disabled={pending}
+        disabled={pending || googlePending}
         onPendingChange={setApplePending}
         onError={setFormError}
       />

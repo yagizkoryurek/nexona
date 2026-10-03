@@ -5,10 +5,11 @@ import { redirect } from "next/navigation";
 
 import {
   GENERIC_AUTH_ERROR,
+  GOOGLE_SIGN_IN_ERROR,
   mapAuthEmailError,
   type AuthEmailResult,
 } from "@/lib/auth-errors";
-import { safeRedirectPath } from "@/lib/auth-redirect";
+import { OAUTH_PROVIDER_PARAM, safeRedirectPath } from "@/lib/auth-redirect";
 import { createClient } from "@/lib/supabase/server";
 
 import {
@@ -55,6 +56,41 @@ export async function signIn(values: SignInValues, next?: string) {
   }
 
   redirect(safeRedirectPath(next));
+}
+
+/**
+ * Starts Google sign-in, for both new and returning users — Google has no
+ * separate sign-up step, so the sign-in and sign-up screens share this.
+ *
+ * `signInWithOAuth` makes no request of its own here: it builds the authorize
+ * URL and, because the `@supabase/ssr` server client runs the PKCE flow, writes
+ * the code verifier cookie that `/auth/callback` later exchanges against. The
+ * browser is then sent to Google, so this resolves only on failure.
+ *
+ * `next` is attacker-controllable, so it goes through `safeRedirectPath` here
+ * and again in the callback.
+ */
+export async function signInWithGoogle(
+  next?: string,
+): Promise<{ error?: string }> {
+  let authorizeUrl: string;
+
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: googleRedirectTo(await origin(), next) },
+    });
+
+    if (error || !data.url) return { error: GOOGLE_SIGN_IN_ERROR };
+    authorizeUrl = data.url;
+  } catch {
+    return { error: GOOGLE_SIGN_IN_ERROR };
+  }
+
+  // Outside the try: `redirect` works by throwing, and the catch above would
+  // swallow it.
+  redirect(authorizeUrl);
 }
 
 export async function signUp(values: SignUpValues): Promise<AuthEmailResult> {
@@ -181,6 +217,17 @@ export async function signOut() {
 /** Shared by `signUp` and `resendSignUp`, so a resent link lands where the first one did. */
 function signUpRedirectTo(appOrigin: string) {
   return `${appOrigin}/auth/callback?next=/dashboard`;
+}
+
+/**
+ * Where Supabase returns the browser after Google. Built with `URLSearchParams`
+ * rather than interpolated, because `next` can itself carry a query string.
+ */
+function googleRedirectTo(appOrigin: string, next?: string) {
+  const url = new URL("/auth/callback", appOrigin);
+  url.searchParams.set("next", safeRedirectPath(next));
+  url.searchParams.set(OAUTH_PROVIDER_PARAM, "google");
+  return url.toString();
 }
 
 /** Absolute origin for the links Supabase emails back to this app. */

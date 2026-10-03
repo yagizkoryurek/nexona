@@ -20,6 +20,9 @@ import { LargeSecureStore } from '@/lib/large-secure-store';
  * `detectSessionInUrl: false` because there is no browser URL to read a session
  * out of: both email flows are completed with an OTP code typed into the app
  * (see lib/auth-context.tsx), so no deep link or callback route is involved.
+ * Google sign-in does return through a URL, but lib/google-auth.ts reads it from
+ * the auth session that opened it and calls `setSession` itself — this option
+ * only ever inspects a web `window.location`, which a native app does not have.
  *
  * `autoRefreshToken` is enabled, but the SDK only ticks its refresh timer while
  * told to — see the AppState wiring in app/_layout.tsx, which is this app's

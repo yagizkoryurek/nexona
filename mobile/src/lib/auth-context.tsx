@@ -14,6 +14,10 @@ import {
   type AppleSignInResult,
 } from '@/lib/apple-auth';
 import { otpRedirectSentinel } from '@/lib/env';
+import {
+  signInWithGoogle as requestGoogleSignIn,
+  type GoogleSignInResult,
+} from '@/lib/google-auth';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -29,7 +33,9 @@ import { supabase } from '@/lib/supabase';
  * address exists during password recovery.
  *
  * Both email flows are completed with an OTP code rather than a clicked link, so
- * no deep link, URL scheme, or callback route is involved anywhere in this app.
+ * no deep link, URL scheme, or callback route is involved in either. Google is
+ * the one flow that returns through a URL (lib/google-auth.ts), and it reads
+ * that URL from the browser session that opened it rather than from a route.
  */
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
@@ -102,6 +108,12 @@ type AuthContextValue = {
    * listener below is what moves the user, not this call.
    */
   signInWithApple: () => Promise<AppleSignInResult>;
+  /**
+   * Google sign-in through Supabase OAuth in an in-app browser. Same contract
+   * as `signInWithApple`: `{ cancelled: true }` renders nothing, and the session
+   * listener — not this call — moves the user.
+   */
+  signInWithGoogle: () => Promise<GoogleSignInResult>;
   signUp: (name: string, email: string, password: string) => Promise<Result>;
   /** Confirms a new account with the emailed code, which also signs the user in. */
   verifySignUp: (email: string, token: string) => Promise<Result>;
@@ -203,6 +215,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // screens reach every auth mutation through one hook, rather than
       // importing the provider module directly and bypassing the context.
       signInWithApple: requestAppleSignIn,
+
+      // Delegates to lib/google-auth.ts, for the same reason as Apple above.
+      signInWithGoogle: requestGoogleSignIn,
 
       async signUp(name, email, password) {
         try {

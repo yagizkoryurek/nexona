@@ -3,7 +3,7 @@ import type { z } from "zod";
 
 import { requireGeminiApiKey } from "@/lib/env";
 
-import { retryOnTransientGeminiError } from "./gemini-retry";
+import { withModelFallback } from "./gemini-retry";
 
 // One client for the process. Each AI module used to construct its own; the
 // client holds no per-request state (unlike the Supabase server client, which
@@ -21,6 +21,18 @@ const genai = new GoogleGenAI({ apiKey: requireGeminiApiKey() });
 // which meant a model swap was an N-file edit.
 export const MODEL = "gemini-3.6-flash";
 
+/**
+ * Used only by callers that pass `useFallbackModel`, and only after `MODEL` is
+ * still answering 503/429 — see `withModelFallback` in ./gemini-retry.
+ *
+ * Flash-Lite because it is the opposite trade to the primary: Google positions
+ * it for high-volume, low-latency work, it answered in under a second on the
+ * day `MODEL` was returning 503s while the newer Flash models took 14–78s, and
+ * it is cheaper per token. The cost is some quality, which is why it is opt-in
+ * per tool rather than global.
+ */
+export const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+
 type StructuredJsonRequest<S extends z.ZodType> = {
   /** Validated before the result is trusted. Its inferred type is returned. */
   schema: S;
@@ -34,6 +46,13 @@ type StructuredJsonRequest<S extends z.ZodType> = {
   contents: string;
   /** Thrown when the model returns no text at all. Per-caller wording. */
   emptyResponseError: string;
+  /**
+   * Opt in to `FALLBACK_MODEL` when `MODEL` stays overloaded. Off by default,
+   * and deliberately left off for the Resume Analyzer: its scores are stored as
+   * the single source of truth, and a second model would score on a different
+   * calibration.
+   */
+  useFallbackModel?: boolean;
 };
 
 /**
@@ -46,12 +65,13 @@ type StructuredJsonRequest<S extends z.ZodType> = {
  * Callers own their own prompt, response schema, and Zod schema — only the
  * client, the model id, and this call/guard/parse sequence are shared.
  *
- * Only the network call is wrapped in the retry. The empty-text guard,
- * `JSON.parse`, and `schema.parse` below run once against whichever attempt
- * succeeded, so a truncated or wrong-shaped response is still a single
- * `SyntaxError` or `ZodError` — never retried, never re-typed. See
- * `./gemini-retry` for what counts as transient and why the bounds are what
- * they are.
+ * Only the network call is wrapped in the retry and the fallback. The
+ * empty-text guard, `JSON.parse`, and `schema.parse` below run once against
+ * whichever attempt — on whichever model — succeeded, so a fallback answer is
+ * validated exactly like a primary one, and a truncated or wrong-shaped
+ * response is still a single `SyntaxError` or `ZodError` — never retried,
+ * never re-typed, never a reason to fall back. See `./gemini-retry` for what
+ * counts as transient and why the bounds are what they are.
  */
 export async function requestStructuredJson<S extends z.ZodType>({
   schema,
@@ -59,17 +79,23 @@ export async function requestStructuredJson<S extends z.ZodType>({
   systemInstruction,
   contents,
   emptyResponseError,
+  useFallbackModel = false,
 }: StructuredJsonRequest<S>): Promise<z.infer<S>> {
-  const response = await retryOnTransientGeminiError(() =>
-    genai.models.generateContent({
-      model: MODEL,
-      contents,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema,
-      },
-    }),
+  const response = await withModelFallback(
+    (model) =>
+      genai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          responseSchema,
+        },
+      }),
+    {
+      primary: MODEL,
+      fallback: useFallbackModel ? FALLBACK_MODEL : undefined,
+    },
   );
 
   if (!response.text) {

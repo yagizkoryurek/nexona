@@ -95,5 +95,7 @@ Write the cover letter per your instructions.`;
     systemInstruction: SYSTEM_PROMPT,
     contents,
     emptyResponseError: "The model did not return a cover letter.",
+    // Text only, so a fallback answer costs some polish, not a stored score.
+    useFallbackModel: true,
   });
 }

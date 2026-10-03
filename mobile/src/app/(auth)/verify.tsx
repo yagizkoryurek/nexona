@@ -19,7 +19,7 @@ import { OTP_LENGTH, validateOtp } from '@/lib/auth-validation';
 /**
  * Shared code-entry screen for both email flows.
  *
- * Supabase emails a numeric token, which is why this project needs no URL
+ * Supabase emails a numeric token, which is why the email flows need no URL
  * scheme, deep-link handling, or in-app browser.
  *
  * One Supabase project serves both clients, so both email templates branch on

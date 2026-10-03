@@ -3,11 +3,15 @@ import { test, type TestContext } from "node:test";
 
 import { ApiError } from "@google/genai";
 
+import { z } from "zod";
+
 import {
   BASE_RETRY_DELAY_MS,
   isRetryableGeminiError,
   MAX_ATTEMPTS,
+  PRIMARY_ATTEMPTS_BEFORE_FALLBACK,
   retryOnTransientGeminiError,
+  withModelFallback,
 } from "./gemini-retry.ts";
 
 /**
@@ -198,6 +202,235 @@ test("the retry log never carries the request", async (t) => {
   const outcome = settle(retryOnTransientGeminiError(call.fn));
   await flush();
   t.mock.timers.tick(500);
+  await flush();
+  await outcome;
+
+  for (const c of warn.mock.calls) {
+    for (const arg of c.arguments) {
+      assert.equal(String(arg).includes(secret), false);
+    }
+  }
+});
+
+// --- Model fallback ---------------------------------------------------------
+
+const PRIMARY = "primary-model";
+const FALLBACK = "fallback-model";
+
+/**
+ * Like `scheduledCall`, but takes the model each call was made with and records
+ * it — so a test can assert not just how many calls ran, but on which model.
+ */
+function scheduledModelCall<T>(failures: unknown[], result: T) {
+  const models: string[] = [];
+  const fn = async (model: string): Promise<T> => {
+    models.push(model);
+    const failure = failures[models.length - 1];
+    if (failure !== undefined) throw failure;
+    return result;
+  };
+  return { fn, models: () => [...models] };
+}
+
+/** A real ZodError, as `schema.parse` would throw it. */
+function zodError(): z.ZodError {
+  const parsed = z.object({ ok: z.literal(true) }).safeParse({});
+  if (parsed.success) throw new Error("unreachable");
+  return parsed.error;
+}
+
+test("fallback bounds: two primary attempts leave room for one fallback call", () => {
+  assert.equal(PRIMARY_ATTEMPTS_BEFORE_FALLBACK, 2);
+  assert.ok(PRIMARY_ATTEMPTS_BEFORE_FALLBACK < MAX_ATTEMPTS);
+});
+
+test("maxAttempts is honoured when given", async (t) => {
+  withMockTimers(t);
+  const errors = [apiError(503), apiError(503)];
+  const call = scheduledCall(errors, "never");
+
+  const outcome = settle(
+    retryOnTransientGeminiError(call.fn, { maxAttempts: 2 }),
+  );
+  await flush();
+  t.mock.timers.tick(500);
+  await flush();
+
+  const result = await outcome;
+  assert.equal(result.ok, false);
+  assert.equal(result.ok === false && result.error, errors[1]);
+  assert.equal(call.calls(), 2);
+});
+
+test("no fallback configured: identical to the plain retry, never another model", async (t) => {
+  withMockTimers(t);
+  const errors = [apiError(503), apiError(503), apiError(503)];
+  const call = scheduledModelCall(errors, "never");
+
+  const outcome = settle(withModelFallback(call.fn, { primary: PRIMARY }));
+  await flush();
+  t.mock.timers.tick(500);
+  await flush();
+  t.mock.timers.tick(1000);
+  await flush();
+
+  const result = await outcome;
+  assert.equal(result.ok === false && result.error, errors[2]);
+  assert.deepEqual(call.models(), [PRIMARY, PRIMARY, PRIMARY]);
+});
+
+test("fallback configured, primary succeeds first time: one call, primary only", async (t) => {
+  const { warn } = withMockTimers(t);
+  const call = scheduledModelCall([], "ok");
+
+  const result = await withModelFallback(call.fn, {
+    primary: PRIMARY,
+    fallback: FALLBACK,
+  });
+
+  assert.equal(result, "ok");
+  assert.deepEqual(call.models(), [PRIMARY]);
+  assert.equal(warn.mock.callCount(), 0);
+});
+
+test("primary 503 then success: retried on the primary, fallback never used", async (t) => {
+  withMockTimers(t);
+  const call = scheduledModelCall([apiError(503)], "ok");
+
+  const outcome = settle(
+    withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+  );
+  await flush();
+  t.mock.timers.tick(BASE_RETRY_DELAY_MS);
+  await flush();
+
+  const result = await outcome;
+  assert.deepEqual(result, { ok: true, value: "ok" });
+  assert.deepEqual(call.models(), [PRIMARY, PRIMARY]);
+});
+
+test("primary exhausted on 503/429: the fallback is called once, and its answer returned", async (t) => {
+  for (const errors of [
+    [apiError(503), apiError(503)],
+    [apiError(429), apiError(503)],
+    [apiError(503), apiError(429)],
+  ]) {
+    const { warn } = withMockTimers(t);
+    const call = scheduledModelCall(errors, "fallback answer");
+
+    const outcome = settle(
+      withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+    );
+    await flush();
+    t.mock.timers.tick(BASE_RETRY_DELAY_MS);
+    await flush();
+
+    const result = await outcome;
+    assert.deepEqual(result, { ok: true, value: "fallback answer" });
+    assert.deepEqual(call.models(), [PRIMARY, PRIMARY, FALLBACK]);
+    // One backoff on the primary, one fallback notice.
+    assert.equal(warn.mock.callCount(), 2);
+    assert.match(String(warn.mock.calls[1].arguments[0]), /trying .* once/);
+    t.mock.reset();
+    t.mock.timers.reset();
+  }
+});
+
+test("a 400 never falls back: thrown after one primary attempt", async (t) => {
+  const { warn } = withMockTimers(t);
+  const error = apiError(400);
+  const call = scheduledModelCall([error], "never");
+
+  const outcome = await settle(
+    withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+  );
+
+  assert.equal(outcome.ok === false && outcome.error, error, "same instance");
+  assert.deepEqual(call.models(), [PRIMARY]);
+  assert.equal(warn.mock.callCount(), 0);
+});
+
+test("schema, parse, empty-response and network failures never fall back", async (t) => {
+  for (const error of [
+    zodError(),
+    new SyntaxError("Unexpected end of JSON input"),
+    new Error("The model did not return an ATS audit."),
+    new TypeError("fetch failed"),
+    apiError(500),
+  ]) {
+    const { warn } = withMockTimers(t);
+    const call = scheduledModelCall([error], "never");
+
+    const outcome = await settle(
+      withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+    );
+
+    assert.equal(outcome.ok === false && outcome.error, error, "same instance");
+    assert.deepEqual(call.models(), [PRIMARY]);
+    assert.equal(warn.mock.callCount(), 0);
+    t.mock.reset();
+    t.mock.timers.reset();
+  }
+});
+
+test("fallback failure: the fallback's own error is thrown, unwrapped, with no further calls", async (t) => {
+  for (const fallbackError of [apiError(503), apiError(400), zodError()]) {
+    withMockTimers(t);
+    const errors = [apiError(503), apiError(503), fallbackError];
+    const call = scheduledModelCall(errors, "never");
+
+    const outcome = settle(
+      withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+    );
+    await flush();
+    t.mock.timers.tick(BASE_RETRY_DELAY_MS);
+    await flush();
+
+    const result = await outcome;
+    assert.equal(result.ok === false && result.error, fallbackError);
+    assert.deepEqual(call.models(), [PRIMARY, PRIMARY, FALLBACK]);
+    t.mock.reset();
+    t.mock.timers.reset();
+  }
+});
+
+test("a model that always 503s is called a bounded number of times — no loop", async (t) => {
+  withMockTimers(t);
+  const models: string[] = [];
+  const alwaysOverloaded = async (model: string): Promise<never> => {
+    models.push(model);
+    throw apiError(503);
+  };
+
+  const outcome = settle(
+    withModelFallback(alwaysOverloaded, {
+      primary: PRIMARY,
+      fallback: FALLBACK,
+    }),
+  );
+  // Far more ticks than any legitimate schedule needs.
+  for (let i = 0; i < 20; i++) {
+    await flush();
+    t.mock.timers.tick(10_000);
+  }
+  await flush();
+
+  const result = await outcome;
+  assert.equal(result.ok, false);
+  assert.equal(models.length, PRIMARY_ATTEMPTS_BEFORE_FALLBACK + 1);
+  assert.equal(models.filter((m) => m === FALLBACK).length, 1);
+});
+
+test("the fallback log never carries the request", async (t) => {
+  const { warn } = withMockTimers(t);
+  const secret = "RESUME TEXT THAT MUST NOT BE LOGGED";
+  const call = scheduledModelCall([apiError(503), apiError(503)], secret);
+
+  const outcome = settle(
+    withModelFallback(call.fn, { primary: PRIMARY, fallback: FALLBACK }),
+  );
+  await flush();
+  t.mock.timers.tick(BASE_RETRY_DELAY_MS);
   await flush();
   await outcome;
 

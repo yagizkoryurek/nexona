@@ -2,6 +2,17 @@
 export const DEFAULT_AUTHENTICATED_PATH = "/dashboard";
 
 /**
+ * Query parameter `signInWithGoogle` adds to its `/auth/callback` URL, so the
+ * callback can tell a Google sign-in from an emailed link.
+ *
+ * Needed because both report failure the same way: an expired email link and a
+ * cancelled Google consent screen each arrive with `error=access_denied`. Only
+ * the message shown depends on it — it grants nothing, so a forged value can at
+ * most change which notice the sign-in page displays.
+ */
+export const OAUTH_PROVIDER_PARAM = "provider";
+
+/**
  * Sanitises a user-supplied `next` destination.
  *
  * `next` arrives from the query string, so it is attacker-controlled input

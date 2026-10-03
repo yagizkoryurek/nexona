@@ -22,6 +22,12 @@ import { ApiError } from "@google/genai";
  * Scope: only the network call to Gemini is retried. `JSON.parse` and the Zod
  * `schema.parse` in `requestStructuredJson` run once, after this returns, so a
  * truncated or wrong-shaped response is handled exactly as before.
+ *
+ * Retrying alone turned out not to be enough. On 2026-10-03 two ATS audits
+ * failed after 19.3s and 28.6s — three 503s each, the backoff too short to
+ * outlast a demand spike and the 60s budget too tight to add attempts. Hence
+ * `withModelFallback` below: an opt-in second model, tried only after the
+ * primary is still overloaded.
  */
 
 /**
@@ -47,6 +53,18 @@ const RETRYABLE_STATUS_CODES: ReadonlySet<number> = new Set([429, 503]);
 export const MAX_ATTEMPTS = 3;
 
 /**
+ * Primary attempts when a fallback model is configured: one fewer than
+ * `MAX_ATTEMPTS`, so the fallback call fits the same budget.
+ *
+ * In production a failing primary attempt takes 6–9s, not the 1–2s a 503 takes
+ * from a quiet client, so the worst case is two failed attempts (~18s) plus the
+ * 500ms backoff plus one fallback generation — under 30s against
+ * `maxDuration = 60`. A third primary attempt would land in the same spike far
+ * more often than it would escape it.
+ */
+export const PRIMARY_ATTEMPTS_BEFORE_FALLBACK = 2;
+
+/**
  * Backoff before retry n is `BASE_RETRY_DELAY_MS * 2 ** (n - 1)`: 500ms, then
  * 1000ms — 1.5s added in the worst case. Short on purpose, for the same
  * duration budget as above. No jitter: this is one server making one call per
@@ -69,8 +87,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Runs `fn`, retrying on a transient Gemini error up to `MAX_ATTEMPTS` total
- * attempts with exponential backoff. Any other error, or a retryable one on the
+ * Runs `fn`, retrying on a transient Gemini error up to `maxAttempts` total
+ * attempts (default `MAX_ATTEMPTS`) with exponential backoff. Any other error, or a retryable one on the
  * final attempt, is re-thrown as-is — never wrapped — so callers that branch on
  * `error instanceof z.ZodError` versus everything else see exactly the errors
  * they saw before this existed.
@@ -84,6 +102,7 @@ function sleep(ms: number): Promise<void> {
  */
 export async function retryOnTransientGeminiError<T>(
   fn: () => Promise<T>,
+  { maxAttempts = MAX_ATTEMPTS }: { maxAttempts?: number } = {},
 ): Promise<T> {
   let attempt = 0;
   for (;;) {
@@ -91,7 +110,7 @@ export async function retryOnTransientGeminiError<T>(
     try {
       return await fn();
     } catch (error) {
-      const isLastAttempt = attempt >= MAX_ATTEMPTS;
+      const isLastAttempt = attempt >= maxAttempts;
       if (!isRetryableGeminiError(error) || isLastAttempt) {
         throw error;
       }
@@ -99,9 +118,56 @@ export async function retryOnTransientGeminiError<T>(
       const delayMs = BASE_RETRY_DELAY_MS * 2 ** (attempt - 1);
       console.warn(
         `Gemini call failed with status ${error.status} ` +
-          `(attempt ${attempt}/${MAX_ATTEMPTS}); retrying in ${delayMs}ms.`,
+          `(attempt ${attempt}/${maxAttempts}); retrying in ${delayMs}ms.`,
       );
       await sleep(delayMs);
     }
+  }
+}
+
+/**
+ * Calls `call` with the primary model, under the retry above, and — only if a
+ * `fallback` is given and the primary is *still* failing with a retryable
+ * 503/429 — calls it once more with the fallback model.
+ *
+ * Without a `fallback` this is exactly `retryOnTransientGeminiError` with its
+ * default `MAX_ATTEMPTS` on the primary, so every caller that does not opt in
+ * behaves as it did before this existed.
+ *
+ * Deliberately narrow:
+ * - Only a retryable `ApiError` falls back. A 400 is our request being wrong
+ *   and would be wrong on any model; a network exception, an empty response, a
+ *   `SyntaxError` or a `ZodError` is not a capacity problem. `requestStructuredJson`
+ *   parses and validates *after* this returns, so malformed output never
+ *   reaches this decision at all — and the fallback's output is validated by
+ *   that same single step.
+ * - The fallback is called once, never retried. Bounded at
+ *   `PRIMARY_ATTEMPTS_BEFORE_FALLBACK + 1` calls in total.
+ * - If the fallback fails too, its error is the one thrown, unwrapped: it is
+ *   the most recent attempt, and callers branch on the error's type.
+ *
+ * Model names appear in this log line only, never in an error a user sees.
+ */
+export async function withModelFallback<T>(
+  call: (model: string) => Promise<T>,
+  { primary, fallback }: { primary: string; fallback?: string },
+): Promise<T> {
+  if (!fallback) {
+    return retryOnTransientGeminiError(() => call(primary));
+  }
+
+  try {
+    return await retryOnTransientGeminiError(() => call(primary), {
+      maxAttempts: PRIMARY_ATTEMPTS_BEFORE_FALLBACK,
+    });
+  } catch (error) {
+    if (!isRetryableGeminiError(error)) throw error;
+
+    console.warn(
+      `Gemini model ${primary} still failing with status ${error.status} ` +
+        `after ${PRIMARY_ATTEMPTS_BEFORE_FALLBACK} attempts; ` +
+        `trying ${fallback} once.`,
+    );
+    return await call(fallback);
   }
 }

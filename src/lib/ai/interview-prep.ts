@@ -244,5 +244,7 @@ Prepare this candidate for interviews per your instructions.`;
     systemInstruction: SYSTEM_PROMPT,
     contents,
     emptyResponseError: "The model did not return interview preparation.",
+    // Text only, so a fallback answer costs some polish, not a stored score.
+    useFallbackModel: true,
   });
 }

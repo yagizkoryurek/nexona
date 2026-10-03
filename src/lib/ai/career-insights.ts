@@ -273,5 +273,7 @@ Assess this candidate's professional position per your instructions.`;
     systemInstruction: SYSTEM_PROMPT,
     contents,
     emptyResponseError: "The model did not return career insights.",
+    // Text only, so a fallback answer costs some polish, not a stored score.
+    useFallbackModel: true,
   });
 }

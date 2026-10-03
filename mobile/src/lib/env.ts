@@ -192,3 +192,22 @@ export const webBaseUrl = 'https://nexona-nine.vercel.app';
  * this is a discriminator, not a destination.
  */
 export const otpRedirectSentinel = 'https://nexona-nine.vercel.app/auth/app';
+
+/**
+ * Where Supabase returns the in-app browser after Google sign-in (see
+ * lib/google-auth.ts).
+ *
+ * Unlike `otpRedirectSentinel` this is a real destination: Supabase appends the
+ * new session's tokens to it. So it must be on Supabase's Redirect URLs
+ * allowlist — an unlisted value is silently replaced with the Site URL, and the
+ * browser sheet then loads the website instead of returning to the app — and
+ * its scheme must be the app's own `scheme` in app.json.
+ *
+ * The scheme is `nexona` rather than the template's generic `mobile` because
+ * this URL carries a session: allowlisting a scheme any other app might also
+ * claim would make the token hand-off only as safe as that guess.
+ *
+ * Pinned rather than built with `Linking.createURL`, which yields an `exp://`
+ * address under Expo Go and could never match a fixed allowlist entry.
+ */
+export const googleAuthRedirectUri = 'nexona://google-auth';

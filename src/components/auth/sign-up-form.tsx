@@ -15,21 +15,20 @@ import {
   useResendCooldown,
 } from "@/hooks/use-resend-cooldown";
 import { GENERIC_AUTH_ERROR } from "@/lib/auth-errors";
-import { cn } from "@/lib/utils";
 
 import { AuthAlert } from "./auth-alert";
 import { AuthCheckEmail } from "./auth-check-email";
+import { AuthDivider } from "./auth-divider";
 import { AuthField } from "./auth-field";
 import { AuthSubmitButton } from "./auth-submit-button";
+import {
+  GoogleSignInButton,
+  legalLinkStyles,
+  useGoogleSignIn,
+} from "./google-sign-in-button";
 import { PasswordInput } from "./password-input";
 import { resendSignUp, signUp } from "./auth-actions";
 import { signUpSchema, type SignUpValues } from "./auth-schemas";
-
-const legalLinkStyles = cn(
-  "text-foreground rounded-sm underline underline-offset-4 transition-colors hover:opacity-70",
-  "focus-visible:outline-ring focus-visible:outline-2 focus-visible:outline-offset-4",
-  "motion-reduce:transition-none",
-);
 
 export function SignUpForm() {
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -58,6 +57,9 @@ export function SignUpForm() {
   });
 
   const pending = form.formState.isSubmitting;
+  const google = useGoogleSignIn({ onError: setFormError });
+  // Either path in flight locks the other: both end in a session for one user.
+  const busy = pending || google.pending;
   const termsError = form.formState.errors.terms?.message;
 
   const onSubmit = async (values: SignUpValues) => {
@@ -140,7 +142,7 @@ export function SignUpForm() {
     <FormProvider {...form}>
       <form
         noValidate
-        aria-busy={pending}
+        aria-busy={busy}
         onSubmit={form.handleSubmit(onSubmit)}
         className="flex flex-col gap-5"
       >
@@ -154,7 +156,7 @@ export function SignUpForm() {
               type="text"
               autoComplete="name"
               placeholder="Ada Lovelace"
-              disabled={pending}
+              disabled={busy}
               className="h-11"
             />
           )}
@@ -168,7 +170,7 @@ export function SignUpForm() {
               type="email"
               autoComplete="email"
               placeholder="you@example.com"
-              disabled={pending}
+              disabled={busy}
               className="h-11"
             />
           )}
@@ -181,7 +183,7 @@ export function SignUpForm() {
               {...form.register("password")}
               autoComplete="new-password"
               placeholder="At least 8 characters"
-              disabled={pending}
+              disabled={busy}
               className="h-11"
             />
           )}
@@ -196,7 +198,7 @@ export function SignUpForm() {
               {...field}
               {...form.register("confirmPassword")}
               autoComplete="new-password"
-              disabled={pending}
+              disabled={busy}
               className="h-11"
             />
           )}
@@ -222,7 +224,7 @@ export function SignUpForm() {
                     field.onChange(checked === true)
                   }
                   onBlur={field.onBlur}
-                  disabled={pending}
+                  disabled={busy}
                   aria-invalid={Boolean(termsError)}
                   aria-describedby={termsError ? "terms-message" : undefined}
                   className="mt-0.5"
@@ -254,9 +256,22 @@ export function SignUpForm() {
           ) : null}
         </div>
 
-        <AuthSubmitButton pending={pending} pendingLabel="Creating account…">
+        <AuthSubmitButton
+          pending={pending}
+          pendingLabel="Creating account…"
+          disabled={google.pending}
+        >
           Create Account
         </AuthSubmitButton>
+
+        <AuthDivider />
+
+        <GoogleSignInButton
+          label="Sign up with Google"
+          pending={google.pending}
+          disabled={pending}
+          onClick={google.start}
+        />
       </form>
     </FormProvider>
   );

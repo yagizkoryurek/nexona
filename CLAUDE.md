@@ -62,7 +62,78 @@ footer's Company links (`/about`, `/contact`) are still unbuilt and will 404.
 **Authentication** (Supabase, cookie sessions) — sign up with required email
 confirmation, resend of the confirmation email, sign in, sign out, forgot
 password, reset password, auth callback for emailed links, route protection,
-session refresh.
+session refresh, and Sign in with Google (web only — see below).
+
+**Sign in with Google (web).** `/sign-in` and `/get-started` each show a
+"Sign in with Google" / "Sign up with Google" button under an "or" divider
+below the email form, with an inline "By continuing, you agree to…" consent
+line — Google creates the account on return, so the sign-up checkbox is never
+reached. The `signInWithGoogle` Server Action calls `signInWithOAuth`, which
+under the `@supabase/ssr` server client runs PKCE and writes the code-verifier
+cookie, then redirects to Google; the existing `/auth/callback` exchanges the
+code exactly as it does for emailed links. `next` survives the round trip,
+sanitized by `safeRedirectPath` on the way out and again in the callback. The
+button calls the action from `onClick`, never a form `action`, because a native
+form post redirecting off-origin can be refused by the CSP's `form-action
+'self'` — so the CSP is unchanged. Either path in flight disables the other.
+
+The callback tells a Google return from an emailed link by a
+`provider=google` marker (`OAUTH_PROVIDER_PARAM`) that the action adds to its
+redirect URL — not by the error, because an expired email link also arrives as
+`error=access_denied`. Marked failures go to `/sign-in?notice=oauth-cancelled`
+(for `access_denied`) or `oauth-failed`, keeping `next`; unmarked ones keep
+`link-invalid`. The marker only selects a message, so forging it grants
+nothing. No custom account linking was added: Supabase's own automatic linking
+by verified email applies.
+
+**Sign in with Google (mobile, iOS only).** "Sign in with Google" / "Sign up
+with Google" sits between the "or" divider and the Apple button on both
+signed-out screens, so Apple's existing consent line covers both and
+`apple-sign-in-button.tsx` and `apple-auth.ts` are untouched. Each screen
+tracks `googlePending` beside `applePending`, and any one path in flight
+disables the other two.
+
+It is **Supabase OAuth in an in-app browser, not a native Google SDK**, and the
+reason is the nonce. `@react-native-google-signin/google-signin` 16.1.5 (the
+free "Original" API) cannot pass one on iOS — `SignInParams` is `{ loginHint? }`
+only, and its native call is the nonce-less `signInWithPresentingViewController:
+hint:additionalScopes:completion:` — while, per Supabase's and Google's
+documentation, Google's iOS SDK puts its own nonce in the ID token, so the
+native route works only with Supabase's "Skip nonce checks" enabled. That was
+deliberately not done, and the package is not a dependency.
+
+`lib/google-auth.ts` calls `signInWithOAuth({ provider: 'google', options: {
+redirectTo: googleAuthRedirectUri, skipBrowserRedirect: true } })` and opens the
+URL with `expo-web-browser`'s `openAuthSessionAsync` — `ASWebAuthenticationSession`
+on iOS, which hands the callback URL back to that call alone rather than
+opening it as a system deep link. Supabase does the code exchange with Google
+server-side, with the Web client and its secret held only in the dashboard; the
+app contains no Google client ID or secret.
+
+Three things about it are deliberate:
+
+- **The session is read from the redirect fragment and stored with
+  `setSession`**, as Supabase's Expo deep-linking guide does, because the mobile
+  client keeps the SDK's default implicit flow. Switching it to PKCE would also
+  change `signUp` and `resetPasswordForEmail`, which the OTP email flows depend
+  on. `setSession` checks the access token with the Auth server before saving
+  it, then emits `SIGNED_IN`, so `Stack.Protected` moves the user exactly as it
+  does for Apple — the helper never navigates.
+- **No `Linking` listener and no route for the callback**, and
+  `detectSessionInUrl` stays `false` (it only reads a web `window.location`).
+  The URL never reaches the router, so a `nexona://` link opened from anywhere
+  else can never sign anyone in. This is also why the button is iOS-only: on
+  Android the same URL would arrive as a deep link with no screen to handle it.
+- **The app's URL scheme is `nexona`**, changed from the template's generic
+  `mobile`, because the redirect carries a session and its scheme is
+  allowlisted project-wide. `googleAuthRedirectUri` (`nexona://google-auth`) is
+  pinned in `lib/env.ts` rather than built with `Linking.createURL`, which yields
+  `exp://` under Expo Go and could never match a fixed allowlist entry.
+
+Closing the sheet, or declining Google's consent (`error=access_denied`),
+resolves as `{ cancelled: true }` and shows nothing, matching Apple. Any other
+error, a URL not on `nexona://google-auth`, or a missing token shows one generic
+message.
 
 **Confirmation-email resend (web).** The sign-up "check your email" panel has a
 **Resend confirmation email** button, backed by `resendSignUp` in
@@ -455,6 +526,9 @@ the sign-in page is never what they meant.
   `resendSignUp` for the same address, gated by the resend countdown.
 - _Sign in_ → `signIn` action → `redirect(safeRedirectPath(next))`, which
   defaults to `/dashboard`.
+- _Google (sign in or sign up)_ → `signInWithGoogle(next)` → Supabase authorize
+  → Google → Supabase → `/auth/callback?next=…&provider=google` →
+  `exchangeCodeForSession` → `next`. Cancel → `/sign-in?notice=oauth-cancelled`.
 - _Forgot password_ → always shows the same success panel whether or not the
   address exists → emailed link → `/auth/callback` → `/reset-password`.
 - _Reset password_ → `updateUser({ password })` → `signOut()` → redirect to
@@ -521,7 +595,7 @@ src/app/
                                reset-password + shared auth layout
   (legal)/                     terms, privacy + shared layout that reuses the
                                landing Navbar/Footer. Placeholder content
-  auth/callback/route.ts       Code exchange for emailed links
+  auth/callback/route.ts       Code exchange for emailed links and Google
   api/mobile/                  Bearer-authenticated endpoints for the Expo app
                                (all six exist; the app ships all six)
     resume-analyzer/route.ts   POST multipart — mirrors analyzeResume
@@ -547,7 +621,8 @@ src/components/
                                (present: accordion, button, checkbox, input,
                                label, separator, sheet, sidebar, skeleton,
                                textarea, tooltip)
-  auth/                        Forms, shared auth UI, auth-actions.ts
+  auth/                        Forms, shared auth UI, auth-actions.ts,
+                               google-sign-in-button, auth-divider
   dashboard/                   dashboard-sidebar, dashboard-nav-items, overview,
                                resume-analyzer, resume-dropzone,
                                analysis-results, resume-analyze-action.ts,
@@ -907,6 +982,39 @@ Each module keeps its own prompt, Gemini `responseSchema`, and Zod schema.
 surface as a `SyntaxError` and a wrong-shaped one as a `ZodError`, because the
 Server Actions branch on `error instanceof z.ZodError` to pick their message.
 Changing the model is now a one-line edit in one file.
+
+**Primary model and fallback.** `MODEL` is `gemini-3.6-flash` and stays the
+primary for every tool. `FALLBACK_MODEL` is `gemini-3.5-flash-lite`, used only
+by a caller that passes `useFallbackModel: true` to `requestStructuredJson`,
+and only when the primary is **still failing with a retryable 503 or 429**:
+
+- Without the flag (default): up to 3 attempts on the primary, 500 ms then
+  1000 ms backoff — unchanged from before the fallback existed.
+- With the flag: 2 attempts on the primary (one 500 ms backoff), then exactly
+  **one** call to the fallback, never retried — at most 3 calls in total, so a
+  worst case of two slow-failing primary attempts plus a fallback generation
+  stays well inside `maxDuration = 60`. If the fallback fails too, its error is
+  thrown unwrapped, so the route's `ZodError`-vs-everything-else message choice
+  is unchanged.
+- **Never falls back on** a 400 or any other non-retryable status, a network
+  exception, an empty response, a `SyntaxError` or a `ZodError`. The
+  empty-guard, `JSON.parse` and `schema.parse` run once, after
+  `withModelFallback` returns, so a fallback answer is validated by exactly the
+  same step as a primary one and malformed output never triggers a fallback.
+- Model names appear only in the server log line, never in a user-facing error.
+
+**Opted in:** ATS Check, Resume Optimizer, Cover Letter Generator, Career
+Insights, Interview Preparation. **The Resume Analyzer deliberately does not**:
+its `overall_score` and `ats_score` are stored as the single source of truth,
+and a second model would score on a different calibration — two numbers for
+one résumé is the problem the derived tools were designed to avoid. The
+mechanics live in `lib/ai/gemini-retry.ts` (`withModelFallback`,
+`PRIMARY_ATTEMPTS_BEFORE_FALLBACK`) and are unit-tested there.
+
+**Confirmed in production** on 2026-10-03: with the primary's free-tier daily
+quota exhausted, a real-iPhone ATS Check against the production API succeeded
+through `gemini-3.5-flash-lite`. See Known Limitations for what the fallback's
+output quality has and has not been checked against.
 
 **Client/server import boundary.** `lib/ai/gemini.ts` constructs the
 `GoogleGenAI` client at module scope, using `GEMINI_API_KEY` — a server-only
@@ -1557,7 +1665,8 @@ Important Notes for the routine that produced these.
   constant check), `delete-account-action.test.ts` (static assertions over SQL
   and Server Action **source text**), `mobile-routes.test.ts` (static
   assertions over the mobile route sources), `gemini-retry.test.ts` (the retry
-  schedule, with mocked timers), `auth-errors.test.ts` (rate-limit error
+  schedule and the model fallback — what falls back, what never does, and the
+  call bound — with mocked timers), `auth-errors.test.ts` (rate-limit error
   mapping), and `use-resend-cooldown.test.ts` (countdown arithmetic and keys
   only — the hook's `localStorage`/interval wiring needs a DOM this runner does
   not have). None executes a query, renders a component, or calls Gemini.
@@ -1566,6 +1675,28 @@ Important Notes for the routine that produced these.
   manual click-through.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
   shadcn's neutral tokens rather than the PDF's blue.
+- **The Gemini key is on the free tier, which caps `gemini-3.6-flash` at 20
+  requests per day per project — shared by every tool, every user, and both
+  clients.** Confirmed on 2026-10-03 from the API's own 429:
+  `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, limit 20. The "high
+  demand" 503s that broke the ATS Check that day are the same tier's load
+  shedding. The fallback model has its own, separate quota, which is what
+  keeps the five opted-in tools working when the primary is exhausted — but
+  the Resume Analyzer has no fallback, so it stops for the rest of the day.
+  This is a billing decision, not a code one: on the paid tier the same model
+  is $0.75/$3.75 per million input/output tokens until 2026-12-31.
+- **The fallback model's quality has been checked on one synthetic résumé, and
+  the primary model's output for the same five tools was not observed in that
+  sitting** (the primary's daily quota ran out mid-run). It has still not been
+  independently verified since the model/fallback change; the production ATS
+  test above exercised the fallback, not the primary. On the fallback path
+  every tool passed its schema and invariants — ATS: four sections once each,
+  no score; Optimizer: every employer, date, degree and metric kept; Career
+  Insights: no score or salary, evidence grounded; Interview Prep: 6–9
+  questions, `resumeProbe` raised for the seeded gap, every `whyAsked`
+  grounded — with two weaker results worth watching: one of two Cover Letter
+  runs did not name the company it was given, and the ATS audit reported no
+  missing sections or keywords for a résumé with no summary section.
 - **The analysis prompt was written for Claude** and carried over to Gemini
   unchanged. Scoring calibration has not been tuned against real Gemini output.
 - **`maxDuration = 60`** is set on `dashboard/resume-analyzer/page.tsx`,
@@ -1616,6 +1747,42 @@ over_email_send_rate_limit`, and no user row is created for a rejected
   Supabase returns when resending to an **already-confirmed** account is also
   unobserved — no special message was added, so it shows whatever that response
   maps to.
+- **Mobile Google sign-in depends on `nexona://google-auth` being on Supabase's
+  Redirect URLs allowlist.** It is now present in Supabase Authentication → URL
+  Configuration → Redirect URLs. It was missing when the code was written, and
+  a read-only probe showed the consequence: an unlisted URI is replaced with
+  the Site URL, so the browser sheet loads the website instead of returning to
+  the app. Like the other allowlist entries, it lives only in the dashboard. The
+  web callback entries pass too, query strings included, since
+  `https://nexona-nine.vercel.app/**` was added and the Site URL corrected.
+- **Mobile Google sign-in has been verified on a real iPhone**, using the EAS
+  Preview build against the production API, with the Mac's `pnpm dev` and
+  Expo/Metro not running: a real Google account signed in, the Supabase session
+  worked, the dashboard opened and existing résumé history loaded. Not reported
+  from that run: cancellation, session persistence across an app relaunch, and
+  how the "G" asset renders. Before the device run it was verified statically:
+  the mobile project typechecks, `expo config` resolves with `scheme: "nexona"`,
+  `expo-doctor` passes every check but the pre-existing SDK patch drift, a
+  production iOS bundle exports and contains the redirect URI, both labels, the
+  flow code and the loading copy (UTF-16), and ships the "G" as an `svg` asset.
+  The redirect parser's actual source passed a scratch harness (tokens in the
+  fragment, errors in query or fragment, look-alike prefixes and other hosts
+  rejected).
+- **Sign in with Google: verified on mobile with a real Google account; the web
+  in production has not yet been reported as manually tested.** On mobile (the
+  iPhone run above) Supabase linked the Google identity onto the existing
+  account rather than creating a second one — that account now has email,
+  Apple and Google identities. On the web, what is verified is
+  `format`/`lint`/`typecheck`/`test`/`build`, both pages rendering the button
+  and consent line, and over HTTP against `next start` —
+  the real Server Action returning a redirect to Supabase's authorize URL with
+  the code-verifier cookie set, an unsafe `next` reduced to `/dashboard`,
+  Supabase forwarding to Google with the configured client, a cancellation
+  simulated at Supabase's callback landing on `notice=oauth-cancelled` with
+  `next` kept, and email-link failures still landing on `link-invalid`. Not
+  yet observed on the web: a successful sign-in with a real Google account. Not
+  yet observed on either client: whether Google's name claim overwrites a
+  `full_name` the user typed at sign-up.
 - **`src/middleware.ts` does not reliably hot-reload** in `next dev`. After
   editing it, restart the dev server before concluding a change didn't work.
 
@@ -1642,10 +1809,17 @@ Redirect URLs allowlisting the app origin and `/auth/callback`; email OTP length
 6 (the Supabase default, and what `OTP_LENGTH` in
 `mobile/src/lib/auth-validation.ts` expects).
 
-Two more the mobile app added, both dashboard-only: the Redirect URLs list must
-also allow `https://nexona-nine.vercel.app/auth/app`, and the **Confirm signup**
-and **Reset password** templates must each carry the `eq .RedirectTo` branch
-described in Current Features. Neither is expressed anywhere in this repository.
+Three more the mobile app added, all dashboard-only: the Redirect URLs list
+must also allow `https://nexona-nine.vercel.app/auth/app` and
+`nexona://google-auth` (Google sign-in's return, see Current Features), and the
+**Confirm signup** and **Reset password** templates must each carry the
+`eq .RedirectTo` branch described in Current Features. None is expressed
+anywhere in this repository.
+
+Google sign-in itself needs the **Google** provider enabled with the Web
+application client's ID and secret, Google's redirect URI set to
+`https://<ref>.supabase.co/auth/v1/callback`, and "Skip nonce checks" left
+**off** — no flow in this repo needs it.
 
 **The allowlist contract, because getting it wrong fails silently.** The web's
 `signUp`, `resendSignUp` and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo`

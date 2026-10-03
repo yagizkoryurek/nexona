@@ -254,5 +254,7 @@ export async function requestAtsAudit(resumeText: string): Promise<AtsAudit> {
     systemInstruction: SYSTEM_PROMPT,
     contents: `Audit this resume for ATS compatibility.\n\nResume text:\n\n${resumeText}`,
     emptyResponseError: "The model did not return an ATS audit.",
+    // Text only, so a fallback answer costs some polish, not a stored score.
+    useFallbackModel: true,
   });
 }

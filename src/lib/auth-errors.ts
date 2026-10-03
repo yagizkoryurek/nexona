@@ -9,6 +9,15 @@
 
 export const GENERIC_AUTH_ERROR = "Something went wrong. Please try again.";
 
+/**
+ * Shown for any failure to start or finish Google sign-in. One message for
+ * every cause, matching the mobile Apple flow: the raw error can tell a
+ * provider-configuration problem from a rejected exchange, which is more than a
+ * signed-out caller should learn.
+ */
+export const GOOGLE_SIGN_IN_ERROR =
+  "We couldn't complete sign in with Google. Please try again.";
+
 export const RATE_LIMITED_ERROR =
   "You're sending requests too quickly. Please wait a few minutes before trying again.";
 
