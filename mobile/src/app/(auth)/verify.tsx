@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   AuthButton,
@@ -8,6 +8,11 @@ import {
   AuthScreen,
 } from '@/components/auth/auth-form';
 import { ThemedText } from '@/components/themed-text';
+import {
+  cooldownKey,
+  DEFAULT_RESEND_COOLDOWN_SECONDS,
+  useResendCooldown,
+} from '@/hooks/use-resend-cooldown';
 import { useAuth } from '@/lib/auth-context';
 import { OTP_LENGTH, validateOtp } from '@/lib/auth-validation';
 
@@ -65,6 +70,18 @@ export default function VerifyScreen() {
   const [pending, setPending] = useState(false);
   const [resending, setResending] = useState(false);
 
+  const cooldown = useResendCooldown(
+    email ? cooldownKey(isRecovery ? 'recovery' : 'signup', email) : null
+  );
+  const { ensureStarted } = cooldown;
+
+  // This screen is only ever reached right after a code was sent, so "Send a
+  // new code" starts locked. A countdown already running for this address —
+  // from forgot-password, say — is left alone rather than restarted.
+  useEffect(() => {
+    ensureStarted(DEFAULT_RESEND_COOLDOWN_SECONDS);
+  }, [ensureStarted]);
+
   async function onSubmit() {
     if (pending) return;
 
@@ -102,21 +119,23 @@ export default function VerifyScreen() {
    * which needs only the address — so the exclusion was unnecessary, and it
    * left a user whose code expired with no way forward but to sign up again.
    *
-   * Supabase rate limits these sends, so a throttled retry surfaces as the
-   * generic failure rather than claiming another email went out.
+   * Supabase rate limits these sends. A confirmed rate limit says so, rather
+   * than the generic failure, and locks the button for longer; every attempt,
+   * failed or not, locks it for at least the default countdown.
    */
   async function onResend() {
-    if (resending || pending) return;
+    if (resending || pending || cooldown.isActive) return;
 
     setFormError(undefined);
     setNotice(undefined);
     setResending(true);
 
-    const { error } = isRecovery
+    const { error, retryAfterSeconds } = isRecovery
       ? await requestPasswordReset(email)
       : await resendSignUp(email);
 
     setResending(false);
+    cooldown.start(retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS);
 
     if (error) {
       setFormError(error);
@@ -170,8 +189,14 @@ export default function VerifyScreen() {
       />
 
       <AuthLink
-        label={resending ? 'Sending…' : 'Send a new code'}
-        disabled={resending || pending}
+        label={
+          resending
+            ? 'Sending…'
+            : cooldown.isActive
+              ? `Send a new code in ${cooldown.remainingSeconds}s`
+              : 'Send a new code'
+        }
+        disabled={resending || pending || cooldown.isActive}
         onPress={onResend}
       />
 

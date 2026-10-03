@@ -8,6 +8,13 @@ import { Controller, FormProvider, useForm } from "react-hook-form";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  cooldownKey,
+  DEFAULT_RESEND_COOLDOWN_SECONDS,
+  startResendCooldown,
+  useResendCooldown,
+} from "@/hooks/use-resend-cooldown";
+import { GENERIC_AUTH_ERROR } from "@/lib/auth-errors";
 import { cn } from "@/lib/utils";
 
 import { AuthAlert } from "./auth-alert";
@@ -15,7 +22,7 @@ import { AuthCheckEmail } from "./auth-check-email";
 import { AuthField } from "./auth-field";
 import { AuthSubmitButton } from "./auth-submit-button";
 import { PasswordInput } from "./password-input";
-import { signUp } from "./auth-actions";
+import { resendSignUp, signUp } from "./auth-actions";
 import { signUpSchema, type SignUpValues } from "./auth-schemas";
 
 const legalLinkStyles = cn(
@@ -27,6 +34,13 @@ const legalLinkStyles = cn(
 export function SignUpForm() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [sentTo, setSentTo] = React.useState<string | null>(null);
+  const [resendPending, setResendPending] = React.useState(false);
+  const [resendNotice, setResendNotice] = React.useState<string | null>(null);
+  const [resendError, setResendError] = React.useState<string | null>(null);
+
+  const cooldown = useResendCooldown(
+    sentTo ? cooldownKey("signup", sentTo) : null,
+  );
 
   const form = useForm<SignUpValues>({
     resolver: zodResolver(signUpSchema),
@@ -55,11 +69,47 @@ export function SignUpForm() {
       return;
     }
 
+    // A confirmation email just went out, so the resend button starts locked
+    // rather than inviting an immediate second send.
+    startResendCooldown(
+      cooldownKey("signup", values.email),
+      DEFAULT_RESEND_COOLDOWN_SECONDS,
+    );
     setSentTo(values.email);
+  };
+
+  const handleResend = async () => {
+    if (!sentTo || resendPending || cooldown.isActive) return;
+
+    setResendNotice(null);
+    setResendError(null);
+    setResendPending(true);
+
+    // The action handles Supabase failures itself; this catches the request to
+    // the server never completing (offline), which would otherwise leave the
+    // button stuck on "Sending…".
+    const result = await resendSignUp(sentTo).catch(() => ({
+      error: GENERIC_AUTH_ERROR,
+      retryAfterSeconds: undefined,
+    }));
+
+    setResendPending(false);
+    // Locked after every attempt, failed ones included: a network blip must not
+    // turn into a burst of sends. A confirmed rate limit locks for longer.
+    cooldown.start(result.retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS);
+
+    if (result.error) {
+      setResendError(result.error);
+      return;
+    }
+
+    setResendNotice("We sent another email. It may take a minute to arrive.");
   };
 
   const handleRetry = () => {
     setSentTo(null);
+    setResendNotice(null);
+    setResendError(null);
     form.reset();
   };
 
@@ -76,6 +126,12 @@ export function SignUpForm() {
             activate your account and sign in.
           </>
         )}
+        onResend={handleResend}
+        resendLabel="Resend confirmation email"
+        resendPending={resendPending}
+        resendCooldownSeconds={cooldown.remainingSeconds}
+        resendNotice={resendNotice}
+        resendError={resendError}
       />
     );
   }

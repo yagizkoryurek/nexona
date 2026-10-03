@@ -109,19 +109,38 @@ function deriveDevApiBaseUrl(): string | null {
 }
 
 /**
+ * The explicit `EXPO_PUBLIC_API_BASE_URL` override, if it may be used.
+ *
+ * Release builds accept only an `https://` value. `EXPO_PUBLIC_*` is inlined
+ * at build time from whatever `.env.local` holds on the building machine, so a
+ * LAN `next dev` address left there would otherwise ship inside a store build
+ * — an earlier local export did exactly that. Dropping it falls through to the
+ * deployed origin rather than failing, since that is what a release build
+ * should talk to anyway. Development builds keep accepting plain `http://`,
+ * which is what a LAN or tunnel override needs.
+ */
+function apiBaseUrlOverride(): string | null {
+  const value = process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  if (!value) return null;
+  if (!__DEV__ && !/^https:\/\//i.test(value)) return null;
+  return value;
+}
+
+/**
  * Base URL of the Next.js app hosting the /api/mobile/* routes.
  *
  * Three-tier precedence:
- * 1. `EXPO_PUBLIC_API_BASE_URL`, if set — wins unconditionally, in dev or
- *    prod. The escape hatch for tunnel mode, a custom port, a different host,
- *    or forcing production while running a dev build.
+ * 1. `EXPO_PUBLIC_API_BASE_URL`, if set — wins in dev with any scheme, and in
+ *    a release build only when it is `https://` (see `apiBaseUrlOverride`).
+ *    The escape hatch for tunnel mode, a custom port, a different host, or
+ *    forcing production while running a dev build.
  * 2. The auto-derived dev host (see `deriveDevApiBaseUrl`) — only applies in
  *    development, and only when Expo actually reports a `hostUri`.
  * 3. The deployed origin, which is what a release build should talk to
  *    anyway and what dev falls back to if `hostUri` is unavailable.
  */
 export const apiBaseUrl =
-  process.env.EXPO_PUBLIC_API_BASE_URL?.trim() ||
+  apiBaseUrlOverride() ||
   deriveDevApiBaseUrl() ||
   'https://nexona-nine.vercel.app';
 

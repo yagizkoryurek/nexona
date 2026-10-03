@@ -3,6 +3,11 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
+import {
+  GENERIC_AUTH_ERROR,
+  mapAuthEmailError,
+  type AuthEmailResult,
+} from "@/lib/auth-errors";
 import { safeRedirectPath } from "@/lib/auth-redirect";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,7 +32,7 @@ import {
  * directly.
  */
 
-const GENERIC_ERROR = "Something went wrong. Please try again.";
+const GENERIC_ERROR = GENERIC_AUTH_ERROR;
 const INVALID_FORM = "Please check the form and try again.";
 
 export async function signIn(values: SignInValues, next?: string) {
@@ -52,7 +57,7 @@ export async function signIn(values: SignInValues, next?: string) {
   redirect(safeRedirectPath(next));
 }
 
-export async function signUp(values: SignUpValues) {
+export async function signUp(values: SignUpValues): Promise<AuthEmailResult> {
   const parsed = signUpSchema.safeParse(values);
   if (!parsed.success) return { error: INVALID_FORM };
 
@@ -63,17 +68,18 @@ export async function signUp(values: SignUpValues) {
       password: parsed.data.password,
       options: {
         data: { full_name: parsed.data.name },
-        emailRedirectTo: `${await origin()}/auth/callback?next=/dashboard`,
+        emailRedirectTo: signUpRedirectTo(await origin()),
       },
     });
 
     if (error) {
-      return {
-        error:
-          error.code === "user_already_exists"
-            ? "An account with this email already exists. Try signing in instead."
-            : GENERIC_ERROR,
-      };
+      if (error.code === "user_already_exists") {
+        return {
+          error:
+            "An account with this email already exists. Try signing in instead.",
+        };
+      }
+      return mapAuthEmailError(error);
     }
   } catch {
     return { error: GENERIC_ERROR };
@@ -84,7 +90,38 @@ export async function signUp(values: SignUpValues) {
   return {};
 }
 
-export async function requestPasswordReset(values: ForgotPasswordValues) {
+/**
+ * Re-sends the sign-up confirmation link. Needs only the address, not the
+ * password — the web counterpart to `resendSignUp` in the mobile app's
+ * lib/auth-context.tsx.
+ *
+ * Only ever called with the address the sign-up form just submitted, never
+ * with free-typed input, so it adds no way to probe which addresses exist.
+ */
+export async function resendSignUp(email: string): Promise<AuthEmailResult> {
+  // Structurally the same single-field check, so reused rather than restated.
+  const parsed = forgotPasswordSchema.safeParse({ email });
+  if (!parsed.success) return { error: INVALID_FORM };
+
+  try {
+    const supabase = await createClient();
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: parsed.data.email,
+      options: { emailRedirectTo: signUpRedirectTo(await origin()) },
+    });
+
+    if (error) return mapAuthEmailError(error);
+  } catch {
+    return { error: GENERIC_ERROR };
+  }
+
+  return {};
+}
+
+export async function requestPasswordReset(
+  values: ForgotPasswordValues,
+): Promise<AuthEmailResult> {
   const parsed = forgotPasswordSchema.safeParse(values);
   if (!parsed.success) return { error: INVALID_FORM };
 
@@ -97,7 +134,7 @@ export async function requestPasswordReset(values: ForgotPasswordValues) {
       { redirectTo: `${await origin()}/auth/callback?next=/reset-password` },
     );
 
-    if (error) return { error: GENERIC_ERROR };
+    if (error) return mapAuthEmailError(error);
   } catch {
     return { error: GENERIC_ERROR };
   }
@@ -139,6 +176,11 @@ export async function signOut() {
   await supabase.auth.signOut();
 
   redirect("/");
+}
+
+/** Shared by `signUp` and `resendSignUp`, so a resent link lands where the first one did. */
+function signUpRedirectTo(appOrigin: string) {
+  return `${appOrigin}/auth/callback?next=/dashboard`;
 }
 
 /** Absolute origin for the links Supabase emails back to this app. */

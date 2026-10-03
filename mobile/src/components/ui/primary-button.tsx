@@ -13,29 +13,36 @@ import { Spacing } from '@/constants/theme';
  *
  * `pendingLabel` doubles as the accessibility label while pending, so a screen
  * reader announces the busy state rather than the idle one.
+ *
+ * `disabled` makes the button inert without claiming to be working — the same
+ * split `AuthButton` draws — e.g. while a resend countdown runs.
  */
 export function PrimaryButton({
   label,
   pendingLabel,
   pending,
+  disabled,
   onPress,
 }: {
   label: string;
   pendingLabel: string;
   pending: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
+  const inert = pending || Boolean(disabled);
+
   return (
     <Pressable
       onPress={onPress}
-      disabled={pending}
+      disabled={inert}
       accessibilityRole="button"
-      accessibilityState={{ disabled: pending, busy: pending }}
+      accessibilityState={{ disabled: inert, busy: pending }}
       accessibilityLabel={pending ? pendingLabel : label}
       style={({ pressed }) => [
         styles.button,
         pressed && styles.pressed,
-        pending && styles.buttonDisabled,
+        inert && styles.buttonDisabled,
       ]}>
       {pending ? (
         <View style={styles.buttonBusy}>

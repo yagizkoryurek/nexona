@@ -34,7 +34,45 @@ import { supabase } from '@/lib/supabase';
 
 const GENERIC_ERROR = 'Something went wrong. Please try again.';
 
-type Result = { error?: string };
+const RATE_LIMITED_ERROR =
+  "You're sending requests too quickly. Please wait a few minutes before trying again.";
+
+/**
+ * How long resend controls stay locked after Supabase confirms a rate limit.
+ * `AuthError` carries a code and a status but never a retry-after value, so
+ * this is a chosen window — the same one the web uses (src/lib/auth-errors.ts).
+ */
+const RATE_LIMITED_COOLDOWN_SECONDS = 300;
+
+const RATE_LIMIT_CODES: ReadonlySet<string> = new Set([
+  'over_email_send_rate_limit',
+  'over_request_rate_limit',
+]);
+
+/**
+ * `retryAfterSeconds` is set only for a confirmed rate limit, and tells the
+ * caller's resend countdown to run longer than its default.
+ */
+type Result = { error?: string; retryAfterSeconds?: number };
+
+/**
+ * Error mapping for the calls that send an auth email, mirroring
+ * `mapAuthEmailError` in the web's src/lib/auth-errors.ts copy-for-copy. It is
+ * duplicated rather than shared for the same reason lib/auth-validation.ts
+ * duplicates the web's rules: the two projects share no code.
+ *
+ * A rate limit gets its own message because "please try again" is exactly the
+ * wrong advice for it. Every other code keeps the generic copy.
+ */
+function mapEmailSendError(error: { code?: string | null }): Result {
+  if (error.code && RATE_LIMIT_CODES.has(error.code)) {
+    return {
+      error: RATE_LIMITED_ERROR,
+      retryAfterSeconds: RATE_LIMITED_COOLDOWN_SECONDS,
+    };
+  }
+  return { error: GENERIC_ERROR };
+}
 
 type AuthContextValue = {
   session: Session | null;
@@ -184,12 +222,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           });
 
           if (error) {
-            return {
-              error:
-                error.code === 'user_already_exists'
-                  ? 'An account with this email already exists. Try signing in instead.'
-                  : GENERIC_ERROR,
-            };
+            if (error.code === 'user_already_exists') {
+              return {
+                error:
+                  'An account with this email already exists. Try signing in instead.',
+              };
+            }
+            return mapEmailSendError(error);
           }
 
           // No session yet: the account is unusable until the emailed code is
@@ -242,7 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             options: { emailRedirectTo: otpRedirectSentinel },
           });
 
-          if (error) return { error: GENERIC_ERROR };
+          if (error) return mapEmailSendError(error);
           return {};
         } catch {
           return { error: GENERIC_ERROR };
@@ -263,7 +302,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             { redirectTo: otpRedirectSentinel }
           );
 
-          if (error) return { error: GENERIC_ERROR };
+          if (error) return mapEmailSendError(error);
           return {};
         } catch {
           return { error: GENERIC_ERROR };

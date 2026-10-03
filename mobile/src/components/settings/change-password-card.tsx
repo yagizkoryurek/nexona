@@ -5,6 +5,11 @@ import { AuthField, AuthLink, FormError } from '@/components/auth/auth-form';
 import { ThemedText } from '@/components/themed-text';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { Spacing } from '@/constants/theme';
+import {
+  cooldownKey,
+  DEFAULT_RESEND_COOLDOWN_SECONDS,
+  useResendCooldown,
+} from '@/hooks/use-resend-cooldown';
 import { useAuth } from '@/lib/auth-context';
 import {
   hasErrors,
@@ -64,6 +69,10 @@ export function ChangePasswordCard({ email }: { email: string }) {
     FieldErrors<ResetPasswordField>
   >({});
 
+  // One countdown for both sends below — they are the same email to the same
+  // address — shared with the (auth) recovery screens by key.
+  const cooldown = useResendCooldown(cooldownKey('recovery', email));
+
   function reset() {
     setPhase('idle');
     setToken('');
@@ -76,14 +85,17 @@ export function ChangePasswordCard({ email }: { email: string }) {
   }
 
   async function onSendCode() {
-    if (pending) return;
+    if (pending || cooldown.isActive) return;
 
     setFormError(undefined);
     setNotice(undefined);
     setPending(true);
 
-    const { error } = await requestPasswordReset(email);
+    const { error, retryAfterSeconds } = await requestPasswordReset(email);
     setPending(false);
+    // Locked after every attempt, failed ones included, so the "Send a new
+    // code" link in the next phase also starts locked.
+    cooldown.start(retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS);
 
     if (error) {
       setFormError(error);
@@ -94,19 +106,20 @@ export function ChangePasswordCard({ email }: { email: string }) {
   }
 
   /**
-   * Re-sends the code. Supabase rate limits these, so a throttled retry surfaces
-   * as the generic failure rather than claiming another email went out — same
-   * handling, and the same notice copy, as the `(auth)/verify` screen.
+   * Re-sends the code. A confirmed rate limit says so, rather than the generic
+   * failure, and locks for longer — same handling, and the same notice copy,
+   * as the `(auth)/verify` screen.
    */
   async function onResend() {
-    if (resending || pending) return;
+    if (resending || pending || cooldown.isActive) return;
 
     setFormError(undefined);
     setNotice(undefined);
     setResending(true);
 
-    const { error } = await requestPasswordReset(email);
+    const { error, retryAfterSeconds } = await requestPasswordReset(email);
     setResending(false);
+    cooldown.start(retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS);
 
     if (error) {
       setFormError(error);
@@ -167,9 +180,14 @@ export function ChangePasswordCard({ email }: { email: string }) {
 
       {phase === 'idle' ? (
         <PrimaryButton
-          label="Send reset code"
+          label={
+            cooldown.isActive
+              ? `Send reset code in ${cooldown.remainingSeconds}s`
+              : 'Send reset code'
+          }
           pendingLabel="Sending…"
           pending={pending}
+          disabled={cooldown.isActive}
           onPress={onSendCode}
         />
       ) : null}
@@ -216,8 +234,14 @@ export function ChangePasswordCard({ email }: { email: string }) {
           />
 
           <AuthLink
-            label={resending ? 'Sending…' : 'Send a new code'}
-            disabled={resending || pending}
+            label={
+              resending
+                ? 'Sending…'
+                : cooldown.isActive
+                  ? `Send a new code in ${cooldown.remainingSeconds}s`
+                  : 'Send a new code'
+            }
+            disabled={resending || pending || cooldown.isActive}
             onPress={onResend}
           />
 

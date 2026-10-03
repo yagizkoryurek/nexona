@@ -10,6 +10,8 @@ type AuthSubmitButtonProps = {
   /** Label swapped in while pending, e.g. "Signing in…". */
   pendingLabel: string;
   pending: boolean;
+  /** Inert without claiming to be working — e.g. while a resend cooldown runs. */
+  disabled?: boolean;
   className?: string;
 };
 
@@ -23,13 +25,14 @@ export function AuthSubmitButton({
   children,
   pendingLabel,
   pending,
+  disabled = false,
   className,
 }: AuthSubmitButtonProps) {
   return (
     <Button
       type="submit"
       size="lg"
-      disabled={pending}
+      disabled={pending || disabled}
       className={cn("h-11 w-full px-6", className)}
     >
       {pending ? (

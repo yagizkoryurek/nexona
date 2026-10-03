@@ -8,6 +8,11 @@ import * as React from "react";
 import { requestPasswordReset } from "@/components/auth/auth-actions";
 import { AuthAlert } from "@/components/auth/auth-alert";
 import { Button } from "@/components/ui/button";
+import {
+  cooldownKey,
+  DEFAULT_RESEND_COOLDOWN_SECONDS,
+  useResendCooldown,
+} from "@/hooks/use-resend-cooldown";
 
 type PasswordResetCardProps = {
   /**
@@ -37,11 +42,22 @@ export function PasswordResetCard({ email }: PasswordResetCardProps) {
   const [sent, setSent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Shares its key with /forgot-password, so both surfaces respect one
+  // countdown for the same address — and it survives a page refresh.
+  const cooldown = useResendCooldown(cooldownKey("recovery", email));
+
   function handleSend() {
+    if (cooldown.isActive) return;
     setError(null);
 
     startTransition(async () => {
       const result = await requestPasswordReset({ email });
+
+      // Started after every attempt. Previously only a success kept the button
+      // away; a failure — a rate limit included — handed it straight back.
+      cooldown.start(
+        result.retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS,
+      );
 
       if (result?.error) {
         setError(result.error);
@@ -74,10 +90,14 @@ export function PasswordResetCard({ email }: PasswordResetCardProps) {
         variant="outline"
         size="lg"
         onClick={handleSend}
-        disabled={pending}
+        disabled={pending || cooldown.isActive}
         className="h-11 w-full px-6 sm:w-auto"
       >
-        {pending ? "Sending…" : "Send password reset link"}
+        {pending
+          ? "Sending…"
+          : cooldown.isActive
+            ? `Send again in ${cooldown.remainingSeconds}s`
+            : "Send password reset link"}
       </Button>
     </div>
   );

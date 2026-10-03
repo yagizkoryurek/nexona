@@ -60,8 +60,46 @@ content pending legal review**, and each says so in an italic notice at the top
 footer's Company links (`/about`, `/contact`) are still unbuilt and will 404.
 
 **Authentication** (Supabase, cookie sessions) — sign up with required email
-confirmation, sign in, sign out, forgot password, reset password, auth
-callback for emailed links, route protection, session refresh.
+confirmation, resend of the confirmation email, sign in, sign out, forgot
+password, reset password, auth callback for emailed links, route protection,
+session refresh.
+
+**Confirmation-email resend (web).** The sign-up "check your email" panel has a
+**Resend confirmation email** button, backed by `resendSignUp` in
+`auth-actions.ts` — the web counterpart of mobile's method of the same name,
+using the same `/auth/callback?next=/dashboard` redirect as `signUp`. It only
+ever resends to the address the form just submitted, never free-typed input, so
+it adds no way to probe which addresses exist. `/forgot-password`'s panel has no
+resend button; it is unchanged.
+
+**Auth email rate limits and resend cooldowns (both clients).**
+`over_email_send_rate_limit` and `over_request_rate_limit` get their own
+message — "You're sending requests too quickly. Please wait a few minutes
+before trying again." — from `mapAuthEmailError` (`src/lib/auth-errors.ts`) on
+the web and its mirror in `mobile/src/lib/auth-context.tsx`. That covers every
+action that sends an auth email: `signUp`, `resendSignUp`, and
+`requestPasswordReset`. Every other code keeps the generic copy, and sign-in's
+deliberately identical error is untouched.
+
+Every control that sends an auth email is locked with a visible countdown after
+**every** attempt, failed ones included: **60 seconds** by default
+(`DEFAULT_RESEND_COOLDOWN_SECONDS`), **5 minutes** when Supabase confirms a rate
+limit (`RATE_LIMITED_COOLDOWN_SECONDS`, returned by the action as
+`retryAfterSeconds`). On the web that is the new resend button,
+`/forgot-password`'s submit, and Settings' "Send password reset link"; on mobile,
+`/verify`'s "Send a new code", `/forgot-password`'s submit, and both sends in
+`ChangePasswordCard`. Countdowns are keyed by flow and address (`signup:` /
+`recovery:`), so the forgot-password page and the Settings card share one for
+the same address. Both windows are chosen constants, not server values —
+Supabase's `AuthError` carries a `code` and `status` but no retry-after — and the
+countdown is a UX guard; Supabase's own throttle remains the enforcement.
+
+The web hook (`src/hooks/use-resend-cooldown.ts`) persists the deadline in
+`localStorage`, so a page refresh resumes the countdown, and falls back to
+in-memory when storage is unavailable. The mobile hook
+(`mobile/src/hooks/use-resend-cooldown.ts`) keeps deadlines in a module-level
+map: shared across screens, so `/verify` picks up the countdown
+`/forgot-password` started, but lost when the app is killed.
 
 **Dashboard shell** — a guarded sidebar layout at `/dashboard` with persistent
 navigation, collapse state that survives reload, and a mobile drawer. Overview
@@ -232,7 +270,9 @@ calls the existing `requestPasswordReset` unchanged — the same action
 `/forgot-password` uses. Linking to `/forgot-password` instead would not work:
 that path is in the middleware's `AUTH_ONLY_PATHS`, so a signed-in user is
 bounced to the dashboard before it renders. The button does not return after a
-successful send, because Supabase Auth throttles outgoing mail.
+successful send, because Supabase Auth throttles outgoing mail; after a failed
+send it is locked behind the resend countdown (see Authentication above), which
+it shares with `/forgot-password` for the same address.
 
 **Delete Account** — in the Danger Zone, gated behind an inline type-`DELETE`-
 to-confirm step. Confirmation is inline rather than a modal because there is no
@@ -411,7 +451,8 @@ the sign-in page is never what they meant.
 - _Sign up_ → `signUp` action → Supabase sends confirmation email → form swaps
   to a "check your email" panel (no redirect — the account is unusable until
   confirmed) → user clicks link → `/auth/callback` exchanges the code for a
-  session → `/dashboard`.
+  session → `/dashboard`. The panel's "Resend confirmation email" calls
+  `resendSignUp` for the same address, gated by the resend countdown.
 - _Sign in_ → `signIn` action → `redirect(safeRedirectPath(next))`, which
   defaults to `/dashboard`.
 - _Forgot password_ → always shows the same success panel whether or not the
@@ -534,6 +575,7 @@ src/components/
   decorative-backdrop.tsx      Shared backdrop (landing + auth + dashboard)
 
 src/hooks/use-mobile.ts        Generated with the sidebar block — DO NOT EDIT
+src/hooks/use-resend-cooldown.ts  Resend countdown, persisted in localStorage
 
 src/lib/
   supabase/                    client.ts (browser), server.ts (RSC/actions),
@@ -553,6 +595,7 @@ src/lib/
   resume-file.ts               Extension + size validation (shared client/server)
   resume-text-extraction.ts    PDF (unpdf) + DOCX (mammoth) → text
   auth-redirect.ts             safeRedirectPath, DEFAULT_AUTHENTICATED_PATH
+  auth-errors.ts               mapAuthEmailError, rate-limit copy + cooldown
   utils.ts                     cn()
 
 src/types/mammoth.d.ts         Local ambient types (mammoth ships none)
@@ -1509,11 +1552,16 @@ Important Notes for the routine that produced these.
 - **The test suite is thin and covers no runtime behaviour.** `pnpm test` runs
   Node's built-in runner (`node:test` + `--experimental-strip-types`) over
   `src/**/*.test.ts` — there is still no Vitest, Jest, Playwright or Cypress,
-  and adding one remains its own decision. Two files exist:
+  and adding one remains its own decision. Six files exist:
   `resume-text-extraction.test.ts` (pure string logic plus a migration-matches-
-  constant check) and `delete-account-action.test.ts` (static assertions over
-  SQL and Server Action **source text**). Neither executes a query, renders a
-  component, or calls Gemini. Everything else is still
+  constant check), `delete-account-action.test.ts` (static assertions over SQL
+  and Server Action **source text**), `mobile-routes.test.ts` (static
+  assertions over the mobile route sources), `gemini-retry.test.ts` (the retry
+  schedule, with mocked timers), `auth-errors.test.ts` (rate-limit error
+  mapping), and `use-resend-cooldown.test.ts` (countdown arithmetic and keys
+  only — the hook's `localStorage`/interval wiring needs a DOM this runner does
+  not have). None executes a query, renders a component, or calls Gemini.
+  Everything else is still
   `format`/`lint`/`typecheck`/`build`, throwaway per-sprint harnesses, and
   manual click-through.
 - **Palette diverges from the Design System PDF.** `globals.css` still carries
@@ -1537,21 +1585,37 @@ Important Notes for the routine that produced these.
   still redirects to a hardcoded `/sign-in?next=/dashboard`, but the middleware
   answers first and encodes the real path, so deep links keep their destination
   in practice.
-- **Supabase Auth email sending is rate limited, and the sign-up form hides
-  it.** This holds regardless of email provider: custom SMTP (now configured
-  via Brevo) changes who delivers the email, not whether Supabase Auth throttles
-  how many it will send. The built-in provider's limit is a couple of sends per
-  hour on a free project; with custom SMTP configured, Supabase's own default
-  is higher and adjustable under Authentication → Rate Limits in the
-  dashboard — the exact number isn't pinned here since it's a dashboard setting,
-  not something this repository controls or verifies. Once exhausted, `/signup`
-  and `/recover` still return `429` with `error_code:
+- **Supabase Auth email sending is rate limited, and the resend countdown only
+  approximates the limit.** This holds regardless of email provider: custom SMTP
+  (now configured via Brevo) changes who delivers the email, not whether
+  Supabase Auth throttles how many it will send. The built-in provider's limit
+  is a couple of sends per hour on a free project; with custom SMTP configured,
+  Supabase's own default is higher and adjustable under Authentication → Rate
+  Limits in the dashboard — the exact number isn't pinned here since it's a
+  dashboard setting, not something this repository controls or verifies. Once
+  exhausted, `/signup` and `/recover` return `429` with `error_code:
 over_email_send_rate_limit`, and no user row is created for a rejected
-  sign-up. `signUp` maps every error other than `user_already_exists` to
-  "Something went wrong. Please try again." — so a throttled user is told to
-  retry, which consumes further attempts. Handling that code with an honest
-  message is still a worthwhile fix and remains Sprint 10.4 scope. Testing
-  several auth flows in one sitting can still hit this.
+  sign-up. Both clients now show that as its own message and lock resend
+  controls for 5 minutes (see Current Features → Authentication), but the 60 s
+  and 5 min windows are chosen constants: Supabase exposes no retry-after, so a
+  countdown can end before Supabase's limit resets and the next attempt is
+  refused again. The mobile countdown also resets when the app is killed.
+  Testing several auth flows in one sitting can still hit this.
+- **A rate-limited password reset may be more legible than a successful one.**
+  Supabase is expected to apply its per-address send frequency only to
+  registered addresses, so a quick second `/forgot-password` request could fail
+  for a real account and succeed for an unknown one. That difference already
+  existed (error vs. success panel); the specific message makes it clearer, not
+  newly possible. Not observed here.
+- **The resend and cooldown work is verified statically only.** It passed
+  `format`/`lint`/`typecheck`/`test`/`build`, the mobile `tsc --noEmit`, and a
+  production-build check that `/get-started`, `/forgot-password` and `/sign-in`
+  render. **No click-through has been done on either client**: no resent email
+  has been observed arriving, no live countdown or refresh-resume has been seen,
+  and the rate-limit message has never been triggered against Supabase. What
+  Supabase returns when resending to an **already-confirmed** account is also
+  unobserved — no special message was added, so it shows whatever that response
+  maps to.
 - **`src/middleware.ts` does not reliably hot-reload** in `next dev`. After
   editing it, restart the dev server before concluding a change didn't work.
 
@@ -1584,7 +1648,7 @@ and **Reset password** templates must each carry the `eq .RedirectTo` branch
 described in Current Features. Neither is expressed anywhere in this repository.
 
 **The allowlist contract, because getting it wrong fails silently.** The web's
-`signUp` and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo`
+`signUp`, `resendSignUp` and `requestPasswordReset` build their `emailRedirectTo` / `redirectTo`
 from the request's own `Origin` (the `origin()` helper in `auth-actions.ts`) —
 the mobile methods of the same name do something different, below. That is
 correct for production — the deployed origin must be used, so hardcoding one

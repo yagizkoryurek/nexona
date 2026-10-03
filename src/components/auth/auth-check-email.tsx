@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { MailCheck } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+import { AuthAlert } from "./auth-alert";
 
 type AuthCheckEmailProps = {
   /** Echoed back so the user can spot a typo without retyping. */
@@ -14,6 +17,17 @@ type AuthCheckEmailProps = {
   /** Returns to the form, e.g. if the address was wrong. */
   onRetry: () => void;
   retryLabel?: string;
+  /**
+   * Opt-in "send it again" action. Only sign-up passes it: the recovery panel
+   * stays exactly as it was, and a flow that omits this renders no resend UI.
+   */
+  onResend?: () => void;
+  resendLabel?: string;
+  resendPending?: boolean;
+  /** Seconds left before another send is allowed; 0 when it is allowed now. */
+  resendCooldownSeconds?: number;
+  resendNotice?: string | null;
+  resendError?: string | null;
 };
 
 /**
@@ -26,7 +40,15 @@ export function AuthCheckEmail({
   description,
   onRetry,
   retryLabel = "Use a different email",
+  onResend,
+  resendLabel = "Resend email",
+  resendPending = false,
+  resendCooldownSeconds = 0,
+  resendNotice,
+  resendError,
 }: AuthCheckEmailProps) {
+  const coolingDown = resendCooldownSeconds > 0;
+
   return (
     <div className="flex flex-col items-center text-center">
       <span
@@ -51,6 +73,33 @@ export function AuthCheckEmail({
           </span>,
         )}
       </p>
+
+      {onResend ? (
+        <div className="mt-6 flex w-full flex-col gap-4">
+          {resendError ? (
+            <AuthAlert className="text-left">{resendError}</AuthAlert>
+          ) : resendNotice ? (
+            <AuthAlert variant="info" className="text-left">
+              {resendNotice}
+            </AuthAlert>
+          ) : null}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            onClick={onResend}
+            disabled={resendPending || coolingDown}
+            className="h-11 w-full px-6"
+          >
+            {resendPending
+              ? "Sending…"
+              : coolingDown
+                ? `${resendLabel} in ${resendCooldownSeconds}s`
+                : resendLabel}
+          </Button>
+        </div>
+      ) : null}
 
       <button
         type="button"

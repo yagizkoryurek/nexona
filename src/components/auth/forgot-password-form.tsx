@@ -5,6 +5,11 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { FormProvider, useForm } from "react-hook-form";
 
 import { Input } from "@/components/ui/input";
+import {
+  cooldownKey,
+  DEFAULT_RESEND_COOLDOWN_SECONDS,
+  useResendCooldown,
+} from "@/hooks/use-resend-cooldown";
 
 import { AuthAlert } from "./auth-alert";
 import { AuthCheckEmail } from "./auth-check-email";
@@ -29,9 +34,25 @@ export function ForgotPasswordForm() {
 
   const pending = form.formState.isSubmitting;
 
+  // Keyed on the address currently typed, so the countdown appears as soon as
+  // someone re-enters an address that was just sent a link — and not for a
+  // different one.
+  const typedEmail = form.watch("email");
+  const cooldown = useResendCooldown(
+    typedEmail.trim() ? cooldownKey("recovery", typedEmail) : null,
+  );
+
   const onSubmit = async (values: ForgotPasswordValues) => {
+    // Pressing Enter can submit past the disabled button; no request is made
+    // while the countdown for this address is running.
+    if (cooldown.isActive) return;
+
     setFormError(null);
     const result = await requestPasswordReset(values);
+
+    // Locked after every attempt, failed ones included; a confirmed rate
+    // limit locks for longer.
+    cooldown.start(result.retryAfterSeconds ?? DEFAULT_RESEND_COOLDOWN_SECONDS);
 
     if (result?.error) {
       setFormError(result.error);
@@ -87,8 +108,14 @@ export function ForgotPasswordForm() {
           )}
         </AuthField>
 
-        <AuthSubmitButton pending={pending} pendingLabel="Sending link…">
-          Send Reset Link
+        <AuthSubmitButton
+          pending={pending}
+          pendingLabel="Sending link…"
+          disabled={cooldown.isActive}
+        >
+          {cooldown.isActive
+            ? `Send again in ${cooldown.remainingSeconds}s`
+            : "Send Reset Link"}
         </AuthSubmitButton>
       </form>
     </FormProvider>
